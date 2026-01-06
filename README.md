@@ -132,7 +132,7 @@ Feel free to submit issues and enhancement requests!
 
 ## License
 
-This plugin is provided as-is for use with Pelican Panel.
+This plugin is provided under GPLv3.
 
 ## Credits
 

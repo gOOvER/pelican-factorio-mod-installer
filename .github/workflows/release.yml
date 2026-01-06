@@ -1,0 +1,63 @@
+name: Create Release
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Release version (e.g., 1.0.0)'
+        required: true
+        type: string
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+      
+      - name: Validate version format
+        run: |
+          if ! [[ "${{ github.event.inputs.version }}" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "Error: Version must be in format X.Y.Z (e.g., 1.0.0)"
+            exit 1
+          fi
+      
+      - name: Create plugin archive
+        run: |
+          mkdir -p release
+          zip -r release/factorio-mod-installer-${{ github.event.inputs.version }}.zip . \
+            -x "*.git*" \
+            -x "release/*" \
+            -x "*.github/*"
+      
+      - name: Create Release
+        uses: softprops/action-gh-release@v1
+        with:
+          tag_name: v${{ github.event.inputs.version }}
+          name: Release v${{ github.event.inputs.version }}
+          draft: false
+          prerelease: false
+          files: release/factorio-mod-installer-${{ github.event.inputs.version }}.zip
+          body: |
+            ## Factorio Mod Installer v${{ github.event.inputs.version }}
+            
+            ### Installation
+            1. Download the ZIP file below
+            2. Go to your Pelican Panel admin area
+            3. Navigate to Plugins
+            4. Click "Import" and upload the ZIP file
+            
+            ### Features
+            - Browse and search Factorio Mod Portal
+            - Install/remove mods with one click
+            - Enable/disable mods without removing
+            - Automatic version compatibility checking
+            - Update detection and bulk updates
+            
+            ### Requirements
+            - Pelican Panel
+            - PHP 8.2 or higher
+            - Factorio server with credentials in server-settings.json
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
