@@ -1,0 +1,28 @@
+{
+    "name": "goover/factorio-mod-installer",
+    "description": "A Pelican Panel plugin for managing Factorio mods directly from the server panel",
+    "type": "pelican-plugin",
+    "license": "MIT",
+    "authors": [
+        {
+            "name": "gOOvER",
+            "email": "goover@example.com"
+        }
+    ],
+    "require": {
+        "php": ">=8.2",
+        "illuminate/support": "^11.0",
+        "illuminate/http": "^11.0",
+        "guzzlehttp/guzzle": "^7.0"
+    },
+    "autoload": {
+        "psr-4": {
+            "gOOvER\\FactorioModInstaller\\": "src/"
+        }
+    },
+    "extra": {
+        "pelican": {
+            "plugin": "gOOvER\\FactorioModInstaller\\FactorioModInstallerPlugin"
+        }
+    }
+}
