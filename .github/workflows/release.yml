@@ -27,11 +27,10 @@ jobs:
       
       - name: Create plugin archive
         run: |
-          mkdir -p release
-          zip -r release/factorio-mod-installer-${{ github.event.inputs.version }}.zip . \
-            -x "*.git*" \
-            -x "release/*" \
-            -x "*.github/*"
+          mkdir -p release/factorio-mod-installer
+          rsync -av --exclude='.git' --exclude='.github' --exclude='release' . release/factorio-mod-installer/
+          cd release
+          zip -r factorio-mod-installer-${{ github.event.inputs.version }}.zip factorio-mod-installer/
       
       - name: Create Release
         uses: softprops/action-gh-release@v1
