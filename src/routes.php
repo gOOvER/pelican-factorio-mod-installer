@@ -6,6 +6,7 @@ use App\Http\Middleware\Activity\ServerSubject;
 use App\Http\Middleware\Api\Client\Server\AuthenticateServerAccess;
 use App\Http\Middleware\Api\Client\Server\ResourceBelongsToServer;
 
+// Routes are automatically registered under 'api/client' prefix with appropriate middleware by the plugin system
 Route::prefix('/servers/{server:uuid}')
     ->middleware([ServerSubject::class, AuthenticateServerAccess::class, ResourceBelongsToServer::class])
     ->group(function () {

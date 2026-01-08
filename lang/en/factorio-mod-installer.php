@@ -20,6 +20,40 @@ return [
         'loading' => 'Loading mods...',
         'no_results' => 'No mods found',
         'downloads' => 'downloads',
+        'refresh' => 'Refresh',
+        'details' => 'Details',
+    ],
+
+    'cache' => [
+        'info' => ':count mods cached, last update :time',
+        'unknown' => 'unknown',
+    ],
+
+    'direct_install' => [
+        'title' => 'Direct Install by Mod Name',
+        'placeholder' => 'Enter mod name (e.g., rso-mod)',
+        'button' => 'Install',
+        'hint' => 'Enter the exact mod name to download and install the latest compatible version.',
+    ],
+    'categories' => [
+        'all' => 'All',
+        'gameplay' => 'Gameplay',
+        'content' => 'Content',
+        'tweaks' => 'Tweaks',
+        'utilities' => 'Utilities',
+        'scenarios' => 'Scenarios',
+        'mod-packs' => 'Mod Packs',
+        'localizations' => 'Localizations',
+        'internal' => 'Internal',
+    ],
+    'details' => [
+        'description' => 'Description',
+        'dependencies' => 'Dependencies',
+        'changelog' => 'Changelog',
+        'homepage' => 'Homepage',
+        'source' => 'Source Code',
+        'required' => 'Required',
+        'optional' => 'Optional',
     ],
     'modal' => [
         'add_title' => 'Add Mod',
@@ -27,6 +61,7 @@ return [
         'mod_name_placeholder' => 'Enter mod name (e.g., "helmod")',
         'cancel' => 'Cancel',
         'add' => 'Add',
+        'close' => 'Close',
     ],
     'messages' => [
         'mod_added' => 'Mod successfully added',
@@ -35,5 +70,17 @@ return [
         'error_adding_mod' => 'Error adding mod',
         'error_removing_mod' => 'Error removing mod',
         'error_loading_mods' => 'Error loading mods',
+    ],
+    'notifications' => [
+        'installed' => 'Mod installed successfully',
+        'removed' => 'Mod removed successfully',
+        'updated' => 'Mod updated successfully',
+        'enabled' => 'Mod enabled',
+        'disabled' => 'Mod disabled',
+        'error' => 'An error occurred',
+        'cache_cleared' => 'Cache cleared successfully',
+        'mod_name_required' => 'Please enter a mod name',
+        'mod_not_found' => 'Mod not found on the portal',
+        'no_compatible_version' => 'No compatible version found for your Factorio version',
     ],
 ];

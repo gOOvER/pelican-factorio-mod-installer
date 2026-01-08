@@ -50,6 +50,11 @@ class FactorioModPortalService
 
         return Cache::remember($cacheKey, self::CACHE_SEARCH_RESULTS, function () use ($query, $page, $pageSize, $sortBy, $sortOrder) {
             try {
+                // If we have a search query with 3+ characters, fetch all pages to ensure complete results
+                if ($query && strlen($query) >= 3) {
+                    return $this->searchAllPages($query, $sortBy, $sortOrder);
+                }
+                
                 $params = [
                     'page' => $page,
                     'page_size' => $pageSize,
@@ -79,21 +84,6 @@ class FactorioModPortalService
                     });
                 }
 
-                // Client-side filtering for search query
-                if ($query && isset($data['results'])) {
-                    $queryLower = strtolower($query);
-                    $data['results'] = array_values(array_filter($data['results'], function ($mod) use ($queryLower) {
-                        return str_contains(strtolower($mod['title'] ?? ''), $queryLower) ||
-                               str_contains(strtolower($mod['name'] ?? ''), $queryLower) ||
-                               str_contains(strtolower($mod['summary'] ?? ''), $queryLower);
-                    }));
-                    
-                    // Update pagination count after filtering
-                    if (isset($data['pagination'])) {
-                        $data['pagination']['count'] = count($data['results']);
-                    }
-                }
-
                 return $data;
             } catch (GuzzleException $e) {
                 Log::error('Error searching Factorio mods: ' . $e->getMessage());
@@ -108,6 +98,87 @@ class FactorioModPortalService
                 ];
             }
         });
+    }
+
+    /**
+     * Search all pages for matching mods
+     *
+     * @param string $query Search query
+     * @param string $sortBy Sort field
+     * @param string $sortOrder Sort order
+     * @return array
+     */
+    private function searchAllPages(string $query, string $sortBy, string $sortOrder): array
+    {
+        $allResults = [];
+        $page = 1;
+        $pageSize = 100; // Max per request
+        $queryLower = strtolower($query);
+        
+        try {
+            do {
+                $params = [
+                    'page' => $page,
+                    'page_size' => $pageSize,
+                    'hide_deprecated' => 'true',
+                ];
+
+                $response = $this->client->get(self::API_BASE, [
+                    'query' => $params,
+                ]);
+
+                $data = json_decode($response->getBody()->getContents(), true);
+                $results = $data['results'] ?? [];
+                
+                // Filter matching mods - search in multiple fields
+                $matching = array_filter($results, function ($mod) use ($queryLower) {
+                    $searchableText = strtolower(implode(' ', [
+                        $mod['title'] ?? '',
+                        $mod['name'] ?? '',
+                        $mod['summary'] ?? '',
+                        $mod['owner'] ?? '',
+                        $mod['category'] ?? '',
+                    ]));
+                    
+                    return str_contains($searchableText, $queryLower);
+                });
+                
+                $allResults = array_merge($allResults, $matching);
+                
+                $pagination = $data['pagination'] ?? [];
+                $page++;
+                
+                // Stop if we've reached the last page or reasonable limit
+                // Limit to 50 pages (5000 mods) for performance - should find most mods
+            } while ($page <= ($pagination['page_count'] ?? 1) && $page <= 50);
+            
+            // Sort results
+            if ($sortBy === 'downloads_count') {
+                usort($allResults, function ($a, $b) use ($sortOrder) {
+                    $aDownloads = $a['downloads_count'] ?? 0;
+                    $bDownloads = $b['downloads_count'] ?? 0;
+                    return $sortOrder === 'asc' 
+                        ? $aDownloads <=> $bDownloads 
+                        : $bDownloads <=> $aDownloads;
+                });
+            }
+            
+            return [
+                'pagination' => [
+                    'count' => count($allResults),
+                    'page' => 1,
+                    'page_count' => 1,
+                    'page_size' => count($allResults),
+                ],
+                'results' => $allResults,
+            ];
+        } catch (GuzzleException $e) {
+            Log::error('Error searching all pages: ' . $e->getMessage());
+            return [
+                'pagination' => ['count' => 0, 'page' => 1, 'page_count' => 0, 'page_size' => 0],
+                'results' => [],
+            ];
+        }
     }
 
     /**
@@ -161,8 +232,45 @@ class FactorioModPortalService
             return null;
         }
 
-        // Releases are sorted by version, get the first one
-        return $modDetails['releases'][0] ?? null;
+        // Releases are NOT always sorted correctly, find the newest by date
+        $releases = $modDetails['releases'];
+        if (empty($releases)) {
+            return null;
+        }
+        
+        // Sort by released_at timestamp descending to get the newest
+        usort($releases, function($a, $b) {
+            $timeA = strtotime($a['released_at'] ?? '1970-01-01');
+            $timeB = strtotime($b['released_at'] ?? '1970-01-01');
+            return $timeB <=> $timeA; // Descending order (newest first)
+        });
+        
+        return $releases[0];
+    }
+
+    /**
+     * Get a specific release version of a mod
+     *
+     * @param string $modName The mod's machine-readable name
+     * @param string $version The version to retrieve
+     * @return array|null
+     */
+    public function getModRelease(string $modName, string $version): ?array
+    {
+        $modDetails = $this->getModDetails($modName, false);
+
+        if (!$modDetails || !isset($modDetails['releases'])) {
+            return null;
+        }
+
+        // Find the specific version
+        foreach ($modDetails['releases'] as $release) {
+            if ($release['version'] === $version) {
+                return $release;
+            }
+        }
+
+        return null;
     }
 
     /**
@@ -222,5 +330,51 @@ class FactorioModPortalService
     public function clearCache(): void
     {
         Cache::flush();
+        Cache::put('factorio_cache_last_refresh', now(), 60 * 60 * 24 * 30); // 30 days
+    }
+
+    /**
+     * Get cache statistics
+     *
+     * @return array
+     */
+    public function getCacheStats(): array
+    {
+        try {
+            $lastRefresh = Cache::get('factorio_cache_last_refresh');
+            
+            // Try to get the total mod count from the API pagination
+            // This gives us the actual total number of mods available
+            $totalMods = 0;
+            $searchCache = Cache::get('factorio_mods_search__1_100_downloads_count_desc');
+            
+            if ($searchCache && isset($searchCache['pagination']['count'])) {
+                // This is the total count from the API
+                $totalMods = $searchCache['pagination']['count'];
+            }
+            
+            // If we have a search cache, use that count instead (it contains more mods)
+            foreach (Cache::get('factorio_mods_search_') ?? [] as $key => $value) {
+                if (str_starts_with($key, 'factorio_mods_search_') && is_array($value) && isset($value['results'])) {
+                    $count = count($value['results']);
+                    if ($count > $totalMods) {
+                        $totalMods = $count;
+                    }
+                }
+            }
+            
+            return [
+                'total_mods_in_cache' => $totalMods,
+                'last_refresh' => $lastRefresh,
+                'has_cache' => $totalMods > 0 || $lastRefresh !== null,
+            ];
+        } catch (\Exception $e) {
+            Log::error('Error getting cache stats: ' . $e->getMessage());
+            return [
+                'total_mods_in_cache' => 0,
+                'last_refresh' => null,
+                'has_cache' => false,
+            ];
+        }
     }
 }

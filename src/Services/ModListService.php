@@ -75,6 +75,36 @@ class ModListService
     }
 
     /**
+     * Get list of mod files in the mods directory
+     *
+     * @param Server $server
+     * @return array
+     */
+    public function getModFiles(Server $server): array
+    {
+        try {
+            $this->fileRepository->setServer($server);
+            $files = $this->fileRepository->getDirectory('mods');
+            
+            // The getDirectory returns an array of file objects with 'name' property
+            $zipFiles = [];
+            foreach ($files as $file) {
+                if (is_array($file) && isset($file['name']) && str_ends_with($file['name'], '.zip')) {
+                    $zipFiles[] = $file['name'];
+                } elseif (is_string($file) && str_ends_with($file, '.zip')) {
+                    $zipFiles[] = $file;
+                }
+            }
+            
+            Log::info("Found mod files: " . implode(', ', $zipFiles));
+            return $zipFiles;
+        } catch (\Exception $e) {
+            Log::warning("Could not list mod files: " . $e->getMessage());
+            return [];
+        }
+    }
+
+    /**
      * Write to the mod-list.json file
      */
     public function writeModList(Server $server, array $data): bool
@@ -104,16 +134,42 @@ class ModListService
     }
 
     /**
+     * Remove a mod file from the mods directory
+     *
+     * @param Server $server
+     * @param string $fileName
+     * @return bool
+     */
+    public function removeModFile(Server $server, string $fileName): bool
+    {
+        try {
+            $this->fileRepository->setServer($server);
+            $this->fileRepository->deleteFiles('mods', [$fileName]);
+            Log::info("Deleted mod file: {$fileName}");
+            return true;
+        } catch (\Exception $e) {
+            Log::error("Failed to delete mod file {$fileName}: " . $e->getMessage());
+            return false;
+        }
+    }
+
+    /**
      * Add or update a mod in the mod list and download the mod file
      */
-    public function addMod(Server $server, string $modName, bool $enabled = true): bool
+    public function addMod(Server $server, string $modName, bool $enabled = true, ?string $version = null): bool
     {
         try {
             // First, get the mod details and download the mod file
-            $release = $this->modPortalService->getLatestRelease($modName);
+            if ($version) {
+                // Get specific version
+                $release = $this->modPortalService->getModRelease($modName, $version);
+            } else {
+                // Get latest release
+                $release = $this->modPortalService->getLatestRelease($modName);
+            }
             
             if (!$release) {
-                Log::error("Could not find release info for mod: {$modName}");
+                Log::error("Could not find release info for mod: {$modName}" . ($version ? " version {$version}" : ""));
                 return false;
             }
             
