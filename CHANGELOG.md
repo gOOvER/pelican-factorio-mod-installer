@@ -5,6 +5,13 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.1.1] - 2026-01-08
+
+### Fixed
+- **Navigation Visibility**: Plugin is now correctly hidden from servers without required tags or features
+  - Fixed `canAccess()` method returning true for all servers
+  - Plugin now only appears when egg name/tags contain "factorio" or features include "factorio_mod_installer"
+
 ## [1.1.0] - 2026-01-08
 
 ### Added
@@ -74,5 +81,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Support for mod dependencies
 - Multi-language support (English, German)
 
+[1.1.1]: https://github.com/gOOvER/pelican-factorio-mod-installer/compare/v1.1.0...v1.1.1
 [1.1.0]: https://github.com/gOOvER/pelican-factorio-mod-installer/compare/v1.0.0...v1.1.0
 [1.0.0]: https://github.com/gOOvER/pelican-factorio-mod-installer/releases/tag/v1.0.0

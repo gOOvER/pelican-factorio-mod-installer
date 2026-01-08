@@ -21,6 +21,11 @@ class FactorioModInstaller extends Page
 
     protected string $view = 'factorio-mod-installer::filament.pages.factorio-mod-installer';
 
+    public static function shouldRegisterNavigation(): bool
+    {
+        return static::canAccess();
+    }
+
     public static function getNavigationIcon(): ?string
     {
         return 'tabler-puzzle';
@@ -794,6 +799,6 @@ class FactorioModInstaller extends Page
             }
         }
 
-        return parent::canAccess();
+        return false;
     }
 }
