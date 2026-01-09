@@ -5,6 +5,23 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.1.2] - 2026-01-09
+
+### Fixed
+- **Mod Update Function**: Fixed critical issues preventing mods from being updated correctly
+  - Added version compatibility check before updating to prevent incompatible mod versions
+  - Improved error handling when deleting old mod files - updates now abort if old files cannot be deleted
+  - Fixed issue where multiple mod versions could exist simultaneously
+  - Enhanced `updateAllMods()` to use same logic as single mod updates
+  - Better error reporting showing which mods updated successfully and which failed
+- **Mod Removal**: Improved `removeMod()` to delete ALL files of a mod (in case multiple versions exist)
+- **Logging**: Added detailed logging throughout update process for better error diagnosis
+- **User Notifications**: More informative notifications including version numbers and specific error messages
+
+### Changed
+- Update process now stops and shows error if old mod files cannot be deleted (instead of continuing silently)
+- `updateAllMods()` now reports detailed results including failed mods
+
 ## [1.1.1] - 2026-01-08
 
 ### Fixed

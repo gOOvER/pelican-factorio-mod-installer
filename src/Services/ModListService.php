@@ -308,18 +308,29 @@ class ModListService
             
             Log::info("Successfully removed {$modName} from mod-list.json");
             
-            // Try to delete the mod file if it exists
+            // Try to delete all mod files for this mod (in case multiple versions exist)
             try {
-                $release = $this->modPortalService->getLatestRelease($modName);
-                $fileName = $release['file_name'] ?? null;
+                $modFiles = $this->getModFiles($server);
+                $modFilePrefix = $modName . '_';
+                $deletedFiles = [];
                 
-                if ($fileName) {
-                    // deleteFiles expects: deleteFiles(string $directory, array $files)
-                    $this->fileRepository->setServer($server)->deleteFiles('mods', [$fileName]);
-                    Log::info("Deleted mod file: {$fileName}");
+                foreach ($modFiles as $file) {
+                    if (str_starts_with($file, $modFilePrefix)) {
+                        try {
+                            $this->fileRepository->setServer($server)->deleteFiles('mods', [$file]);
+                            $deletedFiles[] = $file;
+                            Log::info("Deleted mod file: {$file}");
+                        } catch (\Exception $e) {
+                            Log::warning("Could not delete mod file {$file}: " . $e->getMessage());
+                        }
+                    }
+                }
+                
+                if (empty($deletedFiles)) {
+                    Log::info("No mod files found to delete for {$modName} (mod might have been added to list only)");
                 }
             } catch (\Exception $e) {
-                Log::debug("Could not delete mod file: " . $e->getMessage());
+                Log::warning("Error during mod file deletion: " . $e->getMessage());
                 // This is OK - mod might have been added without download
             }
 

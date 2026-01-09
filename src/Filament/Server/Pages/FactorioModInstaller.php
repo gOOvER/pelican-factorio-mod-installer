@@ -645,7 +645,25 @@ class FactorioModInstaller extends Page
                 return $timeB <=> $timeA;
             });
             
-            $latestRelease = $releases[0];
+            // Find the latest compatible release
+            $latestRelease = null;
+            foreach ($releases as $release) {
+                $factorioVersion = $release['info_json']['factorio_version'] ?? null;
+                if ($factorioVersion && $this->isVersionCompatible($factorioVersion, $this->factorioVersion)) {
+                    $latestRelease = $release;
+                    break;
+                }
+                // If no version specified, accept it
+                if (!$factorioVersion) {
+                    $latestRelease = $release;
+                    break;
+                }
+            }
+            
+            if (!$latestRelease) {
+                throw new \Exception('No compatible version found for Factorio ' . ($this->factorioVersion ?? 'unknown'));
+            }
+            
             $latestVersion = $latestRelease['version'] ?? null;
             
             if (!$latestVersion) {
@@ -653,6 +671,7 @@ class FactorioModInstaller extends Page
             }
             
             // Remove old version files BEFORE installing new version
+            $oldFilesRemoved = false;
             try {
                 $modFiles = $modListService->getModFiles($server);
                 $modFilePrefix = $modName . '_';
@@ -664,20 +683,23 @@ class FactorioModInstaller extends Page
                         Log::info("Removing old version file: {$file}");
                         if ($modListService->removeModFile($server, $file)) {
                             Log::info("Successfully removed {$file}");
+                            $oldFilesRemoved = true;
                         } else {
-                            Log::warning("Failed to remove {$file}");
+                            Log::error("Failed to remove {$file}");
+                            throw new \Exception("Could not delete old mod file: {$file}. Please ensure the server is stopped.");
                         }
                     }
                 }
             } catch (\Exception $e) {
                 Log::error("Error removing old mod files: " . $e->getMessage());
-                // Continue with installation even if deletion fails
+                throw $e; // Don't continue if we can't delete old files
             }
             
             // Install the latest version
             if ($modListService->addMod($server, $modName, true, $latestVersion)) {
                 Notification::make()
                     ->title(__('factorio-mod-installer::factorio-mod-installer.notifications.updated'))
+                    ->body("Updated to version {$latestVersion}")
                     ->success()
                     ->send();
                     
@@ -687,6 +709,7 @@ class FactorioModInstaller extends Page
                 throw new \Exception('Failed to install updated mod');
             }
         } catch (\Exception $e) {
+            Log::error("Error updating mod {$modName}: " . $e->getMessage());
             Notification::make()
                 ->title(__('factorio-mod-installer::factorio-mod-installer.notifications.error'))
                 ->body($e->getMessage())
@@ -701,27 +724,98 @@ class FactorioModInstaller extends Page
             /** @var \App\Models\Server $server */
             $server = Filament::getTenant();
             $modListService = app(ModListService::class);
+            $modPortalService = app(FactorioModPortalService::class);
+            
+            if (empty($this->modsWithUpdates)) {
+                Notification::make()
+                    ->title('No mods to update')
+                    ->info()
+                    ->send();
+                return;
+            }
             
             $updatedCount = 0;
+            $failedMods = [];
+            
             foreach ($this->modsWithUpdates as $modName) {
                 try {
-                    if ($modListService->removeMod($server, $modName)) {
-                        if ($modListService->addMod($server, $modName, true)) {
-                            $updatedCount++;
+                    // Get the latest version
+                    $modDetails = $modPortalService->getModDetails($modName, false);
+                    if (!$modDetails || empty($modDetails['releases'])) {
+                        throw new \Exception('Could not find mod details');
+                    }
+                    
+                    // Sort releases by date to get newest first
+                    $releases = $modDetails['releases'];
+                    usort($releases, function($a, $b) {
+                        $timeA = strtotime($a['released_at'] ?? '1970-01-01');
+                        $timeB = strtotime($b['released_at'] ?? '1970-01-01');
+                        return $timeB <=> $timeA;
+                    });
+                    
+                    // Find the latest compatible release
+                    $latestRelease = null;
+                    foreach ($releases as $release) {
+                        $factorioVersion = $release['info_json']['factorio_version'] ?? null;
+                        if ($factorioVersion && $this->isVersionCompatible($factorioVersion, $this->factorioVersion)) {
+                            $latestRelease = $release;
+                            break;
+                        }
+                        if (!$factorioVersion) {
+                            $latestRelease = $release;
+                            break;
                         }
                     }
+                    
+                    if (!$latestRelease) {
+                        throw new \Exception('No compatible version found');
+                    }
+                    
+                    $latestVersion = $latestRelease['version'] ?? null;
+                    if (!$latestVersion) {
+                        throw new \Exception('Could not determine latest version');
+                    }
+                    
+                    // Remove old version files
+                    $modFiles = $modListService->getModFiles($server);
+                    $modFilePrefix = $modName . '_';
+                    
+                    foreach ($modFiles as $file) {
+                        if (str_starts_with($file, $modFilePrefix)) {
+                            if (!$modListService->removeModFile($server, $file)) {
+                                throw new \Exception("Could not delete old file: {$file}");
+                            }
+                        }
+                    }
+                    
+                    // Install the latest version
+                    if ($modListService->addMod($server, $modName, true, $latestVersion)) {
+                        $updatedCount++;
+                        Log::info("Successfully updated {$modName} to version {$latestVersion}");
+                    } else {
+                        throw new \Exception('Failed to install updated mod');
+                    }
                 } catch (\Exception $e) {
+                    Log::error("Failed to update {$modName}: " . $e->getMessage());
+                    $failedMods[] = $modName;
                     // Continue with other mods
                 }
             }
             
+            $message = "Updated {$updatedCount} mod(s)";
+            if (!empty($failedMods)) {
+                $message .= " (Failed: " . implode(', ', $failedMods) . ")";
+            }
+            
             Notification::make()
-                ->title("Updated {$updatedCount} mod(s)")
-                ->success()
+                ->title($message)
+                ->success($updatedCount > 0)
+                ->warning($updatedCount === 0 && !empty($failedMods))
                 ->send();
                 
             $this->loadInstalledMods();
         } catch (\Exception $e) {
+            Log::error('Error in updateAllMods: ' . $e->getMessage());
             Notification::make()
                 ->title('Error updating mods')
                 ->body($e->getMessage())
