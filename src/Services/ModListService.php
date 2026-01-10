@@ -453,10 +453,41 @@ class ModListService
     {
         $modList = $this->readModList($server);
         
+        // Find the mod in the list
+        $found = false;
         foreach ($modList['mods'] as &$mod) {
             if ($mod['name'] === $modName) {
                 $mod['enabled'] = !($mod['enabled'] ?? true);
+                $found = true;
                 break;
+            }
+        }
+        unset($mod); // Break the reference
+        
+        // If mod not found in mod-list.json but exists as a file, add it
+        if (!$found) {
+            $modFiles = $this->getModFiles($server);
+            $modPrefix = $modName . '_';
+            
+            // Check if the mod file exists
+            $modFileExists = false;
+            foreach ($modFiles as $file) {
+                if (str_starts_with($file, $modPrefix)) {
+                    $modFileExists = true;
+                    break;
+                }
+            }
+            
+            // If file exists, add it to mod-list.json with enabled state
+            if ($modFileExists) {
+                $modList['mods'][] = [
+                    'name' => $modName,
+                    'enabled' => true, // Set to enabled since user wants to toggle it
+                ];
+                Log::info("Added missing mod '{$modName}' to mod-list.json");
+            } else {
+                Log::warning("Mod '{$modName}' not found in mod-list.json and no mod file exists");
+                return false;
             }
         }
 
@@ -465,10 +496,45 @@ class ModListService
 
     /**
      * Get all mods from the mod list
+     * Merges mods from mod-list.json with physically installed mod files
      */
     public function getMods(Server $server): array
     {
         $modList = $this->readModList($server);
-        return $modList['mods'] ?? [];
+        $modsFromList = $modList['mods'] ?? [];
+        
+        // Get physically installed mod files
+        $modFiles = $this->getModFiles($server);
+        
+        // Create a map of mods from mod-list.json
+        $modMap = [];
+        foreach ($modsFromList as $mod) {
+            $modMap[$mod['name']] = $mod;
+        }
+        
+        // Parse mod files and add missing mods
+        foreach ($modFiles as $file) {
+            // Extract mod name from filename: modname_version.zip
+            if (preg_match('/^(.+?)_\d+\.\d+\.\d+(?:\.\d+)?\.zip$/', $file, $matches)) {
+                $modName = $matches[1];
+                
+                // Skip default mods
+                $defaultMods = ['base', 'elevated-rails', 'quality', 'space-age'];
+                if (in_array($modName, $defaultMods)) {
+                    continue;
+                }
+                
+                // If mod not in mod-list.json, add it with default state (disabled)
+                if (!isset($modMap[$modName])) {
+                    $modMap[$modName] = [
+                        'name' => $modName,
+                        'enabled' => false, // Default to disabled for safety
+                    ];
+                    Log::info("Found installed mod '{$modName}' not in mod-list.json, adding with enabled=false");
+                }
+            }
+        }
+        
+        return array_values($modMap);
     }
 }
