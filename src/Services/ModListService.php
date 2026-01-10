@@ -124,11 +124,15 @@ class ModListService
             
             // Write the file
             $content = json_encode($data, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES);
+            Log::info("Writing mod-list.json with " . count($data['mods'] ?? []) . " mods. Content: " . substr($content, 0, 500));
+            
             $this->fileRepository->putContent($path, $content);
             
+            Log::info("Successfully wrote mod-list.json to {$path}");
             return true;
         } catch (\Exception $e) {
             Log::error('Failed to write mod-list.json via Wings: ' . $e->getMessage());
+            Log::error('Stack trace: ' . $e->getTraceAsString());
             return false;
         }
     }
@@ -150,6 +154,54 @@ class ModListService
         } catch (\Exception $e) {
             Log::error("Failed to delete mod file {$fileName}: " . $e->getMessage());
             return false;
+        }
+    }
+
+    /**
+     * Get mod info.json from a mod ZIP file
+     *
+     * @param Server $server
+     * @param string $modName
+     * @return array|null Returns mod info or null if not found
+     */
+    public function getModInfo(Server $server, string $modName): ?array
+    {
+        try {
+            $modFiles = $this->getModFiles($server);
+            $modPrefix = $modName . '_';
+            
+            // Find the mod file
+            $modFile = null;
+            foreach ($modFiles as $file) {
+                if (str_starts_with($file, $modPrefix)) {
+                    $modFile = $file;
+                    break;
+                }
+            }
+            
+            if (!$modFile) {
+                Log::warning("No mod file found for {$modName}");
+                return null;
+            }
+            
+            // Try to read info.json from the ZIP
+            // Note: We can't easily read ZIP contents via Wings API, so we'll try to fetch from portal
+            // This is a limitation - in a real implementation, we'd download and inspect the ZIP
+            
+            // Fallback: Get version from filename
+            if (preg_match('/' . preg_quote($modName, '/') . '_(\d+\.\d+\.\d+(?:\.\d+)?)\.zip$/', $modFile, $matches)) {
+                return [
+                    'name' => $modName,
+                    'version' => $matches[1],
+                    'title' => $modName,
+                    'factorio_version' => null, // Unknown without reading ZIP
+                ];
+            }
+            
+            return null;
+        } catch (\Exception $e) {
+            Log::error("Error getting mod info for {$modName}: " . $e->getMessage());
+            return null;
         }
     }
 
@@ -453,12 +505,18 @@ class ModListService
     {
         $modList = $this->readModList($server);
         
+        Log::info("toggleMod called for '{$modName}', current mod-list.json has " . count($modList['mods']) . " mods");
+        
         // Find the mod in the list
         $found = false;
+        $newState = null;
         foreach ($modList['mods'] as &$mod) {
             if ($mod['name'] === $modName) {
-                $mod['enabled'] = !($mod['enabled'] ?? true);
+                $oldState = $mod['enabled'] ?? true;
+                $mod['enabled'] = !$oldState;
+                $newState = $mod['enabled'];
                 $found = true;
+                Log::info("Found mod '{$modName}' in mod-list.json, toggling from " . ($oldState ? 'enabled' : 'disabled') . " to " . ($newState ? 'enabled' : 'disabled'));
                 break;
             }
         }
@@ -469,11 +527,14 @@ class ModListService
             $modFiles = $this->getModFiles($server);
             $modPrefix = $modName . '_';
             
+            Log::info("Mod '{$modName}' not found in mod-list.json, checking " . count($modFiles) . " mod files");
+            
             // Check if the mod file exists
             $modFileExists = false;
             foreach ($modFiles as $file) {
                 if (str_starts_with($file, $modPrefix)) {
                     $modFileExists = true;
+                    Log::info("Found mod file: {$file}");
                     break;
                 }
             }
@@ -484,19 +545,24 @@ class ModListService
                     'name' => $modName,
                     'enabled' => true, // Set to enabled since user wants to toggle it
                 ];
-                Log::info("Added missing mod '{$modName}' to mod-list.json");
+                $newState = true;
+                Log::info("Added missing mod '{$modName}' to mod-list.json with enabled=true");
             } else {
                 Log::warning("Mod '{$modName}' not found in mod-list.json and no mod file exists");
                 return false;
             }
         }
 
-        return $this->writeModList($server, $modList);
+        $writeResult = $this->writeModList($server, $modList);
+        Log::info("writeModList returned: " . ($writeResult ? 'true' : 'false') . " for mod '{$modName}' with state " . ($newState ? 'enabled' : 'disabled'));
+        
+        return $writeResult;
     }
 
     /**
      * Get all mods from the mod list
      * Merges mods from mod-list.json with physically installed mod files
+     * Automatically syncs missing mods to mod-list.json
      */
     public function getMods(Server $server): array
     {
@@ -511,6 +577,9 @@ class ModListService
         foreach ($modsFromList as $mod) {
             $modMap[$mod['name']] = $mod;
         }
+        
+        // Track if we need to update mod-list.json
+        $needsUpdate = false;
         
         // Parse mod files and add missing mods
         foreach ($modFiles as $file) {
@@ -530,8 +599,19 @@ class ModListService
                         'name' => $modName,
                         'enabled' => false, // Default to disabled for safety
                     ];
+                    $needsUpdate = true;
                     Log::info("Found installed mod '{$modName}' not in mod-list.json, adding with enabled=false");
                 }
+            }
+        }
+        
+        // If we found new mods, update mod-list.json to keep it in sync
+        if ($needsUpdate) {
+            $modList['mods'] = array_values($modMap);
+            if ($this->writeModList($server, $modList)) {
+                Log::info("Successfully synced " . count($modMap) . " mods to mod-list.json");
+            } else {
+                Log::error("Failed to sync mods to mod-list.json");
             }
         }
         

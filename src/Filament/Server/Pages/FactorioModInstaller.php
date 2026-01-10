@@ -965,19 +965,78 @@ class FactorioModInstaller extends Page implements Forms\Contracts\HasForms
             /** @var \App\Models\Server $server */
             $server = Filament::getTenant();
             $modListService = app(ModListService::class);
+            $modPortalService = app(FactorioModPortalService::class);
             
             if ($modListService->toggleMod($server, $modName)) {
+                // Verify the change was written
+                $updatedMods = $modListService->getMods($server);
+                $newState = null;
+                foreach ($updatedMods as $mod) {
+                    if ($mod['name'] === $modName) {
+                        $newState = $mod['enabled'] ?? false;
+                        break;
+                    }
+                }
+                
                 $this->loadInstalledMods();
-                Notification::make()
-                    ->title('Mod status updated')
-                    ->success()
-                    ->send();
+                
+                $statusText = $newState ? 'enabled' : 'disabled';
+                
+                // Get mod details to check compatibility
+                $warningMessage = null;
+                if ($newState) { // Only warn when enabling
+                    try {
+                        $modDetails = $modPortalService->getModDetails($modName, true);
+                        if ($modDetails && isset($modDetails['releases'])) {
+                            // Find the installed version
+                            $modFiles = $modListService->getModFiles($server);
+                            $installedVersion = null;
+                            foreach ($modFiles as $file) {
+                                if (preg_match('/' . preg_quote($modName, '/') . '_(\d+\.\d+\.\d+(?:\.\d+)?)\.zip$/', $file, $matches)) {
+                                    $installedVersion = $matches[1];
+                                    break;
+                                }
+                            }
+                            
+                            // Find the release for installed version
+                            if ($installedVersion) {
+                                foreach ($modDetails['releases'] as $release) {
+                                    if ($release['version'] === $installedVersion) {
+                                        $requiredFactorioVersion = $release['info_json']['factorio_version'] ?? null;
+                                        if ($requiredFactorioVersion && $this->factorioVersion) {
+                                            if (!$this->isVersionCompatible($requiredFactorioVersion, $this->factorioVersion)) {
+                                                $warningMessage = "⚠️ This mod requires Factorio {$requiredFactorioVersion}, but your server is running {$this->factorioVersion}. Factorio will likely disable this mod on startup.";
+                                            }
+                                        }
+                                        break;
+                                    }
+                                }
+                            }
+                        }
+                    } catch (\Exception $e) {
+                        Log::warning("Could not check mod compatibility: " . $e->getMessage());
+                    }
+                }
+                
+                $notif = Notification::make()
+                    ->title("Mod {$statusText}")
+                    ->success();
+                
+                if ($warningMessage) {
+                    $notif->body($warningMessage)->warning();
+                } else if ($newState) {
+                    $notif->body("Note: If this mod has missing dependencies or version incompatibilities, Factorio may automatically disable it on server start.");
+                }
+                
+                $notif->send();
             } else {
                 throw new \Exception('Failed to toggle mod');
             }
         } catch (\Exception $e) {
+            Log::error("Toggle mod failed: " . $e->getMessage());
             Notification::make()
                 ->title('Error toggling mod')
+                ->body($e->getMessage())
                 ->danger()
                 ->send();
         }

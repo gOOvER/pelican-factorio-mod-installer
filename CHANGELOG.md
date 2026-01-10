@@ -11,10 +11,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Mod Toggle Functionality**: Fixed enabled/disabled button not updating mod-list.json
   - `toggleMod()` now automatically adds mods to mod-list.json if they exist as files but are not listed
   - Ensures mod state changes are properly persisted to Factorio's mod-list.json
+  - Added extensive debug logging to track toggle operations
 - **Installed Mods Detection**: Enhanced mod discovery to show all physically installed mods
   - `getMods()` now scans the mods directory for .zip files and merges them with mod-list.json entries
-  - Mods found in the filesystem but not in mod-list.json are automatically added with `enabled=false` as default
+  - Mods found in the filesystem but not in mod-list.json are automatically synced to mod-list.json with `enabled=false` as default
   - Fixes issue where manually installed mods were not visible or toggleable in the interface
+  - Auto-sync ensures mod-list.json stays in sync with physical mod files
+
+### Added
+- **Mod Compatibility Warnings**: Toggle notifications now warn about potential issues
+  - Checks installed mod version against server's Factorio version
+  - Displays warning if version incompatibility is detected
+  - Informs users that Factorio may automatically disable incompatible mods on server start
+  - Helps users understand why some mods get disabled after server restart
 
 ## [1.2.1] - 2026-01-10
 
