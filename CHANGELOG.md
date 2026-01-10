@@ -5,6 +5,13 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.2.1] - 2026-01-10
+
+### Fixed
+- **Update Check Compatibility**: Updates are now only shown if the new mod version is compatible with the server's Factorio version
+  - Previously, updates were shown even when the new version required a different Factorio version
+  - Now only compatible releases are considered when checking for updates
+
 ## [1.2.0] - 2026-01-10
 
 ### Added

@@ -542,7 +542,18 @@ class FactorioModInstaller extends Page implements Forms\Contracts\HasForms
                                 return $timeB <=> $timeA; // Descending (newest first)
                             });
                             
-                            $latestRelease = $releases[0];
+                            // Find the latest COMPATIBLE release (not just the latest overall)
+                            $latestCompatibleRelease = null;
+                            foreach ($releases as $release) {
+                                $releaseFactorioVersion = $release['info_json']['factorio_version'] ?? '0.0';
+                                if ($this->isVersionCompatible($releaseFactorioVersion)) {
+                                    $latestCompatibleRelease = $release;
+                                    break;
+                                }
+                            }
+                            
+                            // If no compatible version found, use null to indicate no update available
+                            $latestRelease = $latestCompatibleRelease;
                             $mod['latest_version'] = $latestRelease['version'] ?? null;
                             
                             // Get current installed version from file name if available
