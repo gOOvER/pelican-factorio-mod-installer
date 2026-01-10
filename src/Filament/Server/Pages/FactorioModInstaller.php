@@ -7,15 +7,24 @@ use App\Traits\Filament\BlockAccessInConflict;
 use Filament\Facades\Filament;
 use Filament\Pages\Page;
 use Filament\Notifications\Notification;
+use Filament\Forms;
+use Filament\Forms\Components\TextInput;
+use Filament\Forms\Components\Select;
+use Filament\Forms\Components\Placeholder;
+use Filament\Actions\Action;
+use Filament\Schemas\Components\Actions;
+use Filament\Schemas\Components\Section;
+use Filament\Schemas\Schema;
 use gOOvER\FactorioModInstaller\Services\FactorioModPortalService;
 use gOOvER\FactorioModInstaller\Services\ModListService;
 use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Facades\Log;
 use Livewire\Attributes\Computed;
 
-class FactorioModInstaller extends Page
+class FactorioModInstaller extends Page implements Forms\Contracts\HasForms
 {
     use BlockAccessInConflict;
+    use Forms\Concerns\InteractsWithForms;
 
     protected static ?string $slug = 'factorio-mods';
 
@@ -62,6 +71,18 @@ class FactorioModInstaller extends Page
     public array $cacheStats = [];
     public string $directInstallModName = '';
     public bool $allModsEnabled = true;
+    public array $availableVersions = [];
+    public ?string $selectedVersion = null;
+    public bool $loadingVersions = false;
+    public bool $validatingModName = false;
+    public ?bool $modNameValid = null;
+    public ?array $modDetailsPreview = null;
+    public bool $showModDetails = false;
+    
+    // Filter & Search Properties
+    public string $installedModsSearch = '';
+    public string $installedModsFilter = 'all'; // all, enabled, disabled, updates
+    public string $installedModsSort = 'name'; // name, version, status
 
     public function mount(): void
     {
@@ -69,6 +90,242 @@ class FactorioModInstaller extends Page
         $this->loadFactorioVersion();
         $this->loadBrowseMods();
         $this->loadCacheStats();
+    }
+
+    public function form(Schema $form): Schema
+    {
+        return $form
+            ->schema([
+                Section::make('Install Mod')
+                    ->description('Enter the mod name to install from Factorio Mod Portal')
+                    ->schema([
+                        TextInput::make('directInstallModName')
+                            ->label('Mod Name')
+                            ->placeholder('e.g., space-exploration')
+                            ->required()
+                            ->live(onBlur: true)
+                            ->afterStateUpdated(function ($state) {
+                                $this->directInstallModName = $state;
+                                $this->validateModName();
+                            })
+                            ->helperText(fn () => $this->getModNameHelperText())
+                            ->suffixIcon(fn () => $this->getModValidationIcon())
+                            ->suffixIconColor(fn () => $this->getModValidationColor())
+                            ->extraInputAttributes([
+                                'x-data' => '{}',
+                                'x-on:drop.prevent' => "
+                                    const text = \$event.dataTransfer.getData('text');
+                                    const match = text.match(/mods\.factorio\.com\/mod\/([^\/\?#]+)/);
+                                    if (match) {
+                                        \$wire.set('directInstallModName', match[1]);
+                                        \$wire.call('validateModName');
+                                    }
+                                ",
+                                'x-on:dragover.prevent' => '',
+                            ]),
+
+                        Select::make('selectedVersion')
+                            ->label('Version (optional)')
+                            ->placeholder('Latest compatible version')
+                            ->options(fn () => $this->getVersionOptions())
+                            ->visible(fn () => !empty($this->availableVersions))
+                            ->live()
+                            ->afterStateUpdated(function ($state) {
+                                $this->selectedVersion = $state;
+                            })
+                            ->helperText(fn () => count($this->availableVersions) . ' version(s) available'),
+
+                        Placeholder::make('modDetailsPreview')
+                            ->label('Mod Details')
+                            ->content(fn () => $this->formatModDetailsHtml())
+                            ->visible(fn () => $this->showModDetails && $this->modDetailsPreview),
+
+                        Actions::make([
+                            Action::make('findVersions')
+                                ->label('Find Versions')
+                                ->icon('heroicon-o-magnifying-glass')
+                                ->color('gray')
+                                ->disabled(fn () => $this->modNameValid === false || empty($this->directInstallModName))
+                                ->action(fn () => $this->loadAvailableVersions()),
+
+                            Action::make('installMod')
+                                ->label(fn () => 'Install Mod' . ($this->selectedVersion ? " (v{$this->selectedVersion})" : ''))
+                                ->icon('heroicon-o-arrow-down-tray')
+                                ->color('success')
+                                ->size('lg')
+                                ->disabled(fn () => $this->modNameValid === false || empty($this->directInstallModName))
+                                ->action(fn () => $this->installModByName()),
+                        ])->fullWidth(),
+                    ]),
+            ]);
+    }
+
+    protected function getModNameHelperText(): ?string
+    {
+        if ($this->modNameValid === false) {
+            return 'Mod not found on Factorio Mod Portal';
+        }
+        if ($this->validatingModName) {
+            return 'Validating...';
+        }
+        return 'Drag & drop a mod URL or enter the mod name manually';
+    }
+
+    protected function getModValidationIcon(): ?string
+    {
+        if ($this->modNameValid === true) {
+            return 'heroicon-o-check-circle';
+        }
+        if ($this->modNameValid === false) {
+            return 'heroicon-o-x-circle';
+        }
+        return null;
+    }
+
+    protected function getModValidationColor(): ?string
+    {
+        if ($this->modNameValid === true) {
+            return 'success';
+        }
+        if ($this->modNameValid === false) {
+            return 'danger';
+        }
+        return null;
+    }
+
+    protected function getVersionOptions(): array
+    {
+        $options = [];
+        foreach ($this->availableVersions as $version) {
+            $label = "v{$version['version']} (Factorio {$version['factorio_version']})";
+            if ($version['is_compatible']) {
+                $label .= ' ✓';
+            } else {
+                $label .= ' ⚠ Incompatible';
+            }
+            if ($version['released_at']) {
+                $label .= ' - ' . \Carbon\Carbon::parse($version['released_at'])->format('Y-m-d');
+            }
+            $options[$version['version']] = $label;
+        }
+        return $options;
+    }
+
+    protected function formatModDetailsHtml(): \Illuminate\Support\HtmlString|string
+    {
+        if (empty($this->modDetailsPreview)) {
+            return '';
+        }
+
+        $details = $this->modDetailsPreview;
+        
+        // Moderne Card mit Gradient-Border
+        $html = "<div class='relative overflow-hidden rounded-xl border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-900 shadow-sm'>";
+        
+        // Header mit Gradient Background
+        $html .= "<div class='bg-gradient-to-r from-primary-50 to-info-50 dark:from-gray-800 dark:to-gray-800 px-6 py-4 border-b border-gray-200 dark:border-gray-700'>";
+        $html .= "<div class='flex items-start justify-between gap-4'>";
+        
+        // Title & Author
+        $html .= "<div class='flex-1 min-w-0'>";
+        $html .= "<h4 class='text-lg font-bold text-gray-900 dark:text-white mb-1 truncate'>" . htmlspecialchars($details['title']) . "</h4>";
+        $html .= "<div class='flex items-center gap-2 text-xs text-gray-600 dark:text-gray-400'>";
+        $html .= "<svg class='w-4 h-4 flex-shrink-0' fill='currentColor' viewBox='0 0 20 20'><path fill-rule='evenodd' d='M10 9a3 3 0 100-6 3 3 0 000 6zm-7 9a7 7 0 1114 0H3z' clip-rule='evenodd'/></svg>";
+        $html .= "<span class='font-medium'>" . htmlspecialchars($details['owner']) . "</span>";
+        if (!empty($details['category'])) {
+            $html .= "<span class='text-gray-400 dark:text-gray-600'>•</span>";
+            $html .= "<span class='px-2 py-0.5 bg-white dark:bg-gray-700 rounded-full text-xs font-medium'>" . ucfirst(htmlspecialchars($details['category'])) . "</span>";
+        }
+        $html .= "</div></div>";
+        
+        // Downloads Badge
+        $html .= "<div class='flex-shrink-0'>";
+        $html .= "<div class='flex items-center gap-1.5 px-3 py-1.5 bg-white dark:bg-gray-800 rounded-lg border border-gray-200 dark:border-gray-700'>";
+        $html .= "<svg class='w-4 h-4 text-success-600 dark:text-success-400' fill='currentColor' viewBox='0 0 20 20'><path fill-rule='evenodd' d='M3 17a1 1 0 011-1h12a1 1 0 110 2H4a1 1 0 01-1-1zm3.293-7.707a1 1 0 011.414 0L9 10.586V3a1 1 0 112 0v7.586l1.293-1.293a1 1 0 111.414 1.414l-3 3a1 1 0 01-1.414 0l-3-3a1 1 0 010-1.414z' clip-rule='evenodd'/></svg>";
+        $html .= "<span class='text-sm font-semibold text-gray-900 dark:text-white'>" . number_format($details['downloads_count']) . "</span>";
+        $html .= "</div></div>";
+        
+        $html .= "</div></div>";
+        
+        // Body mit Description
+        if (!empty($details['summary'])) {
+            $html .= "<div class='px-6 py-4'>";
+            $html .= "<p class='text-sm text-gray-700 dark:text-gray-300 leading-relaxed'>" . htmlspecialchars($details['summary']) . "</p>";
+            $html .= "</div>";
+        }
+        
+        // Footer mit Links - Verbesserte Sichtbarkeit
+        $html .= "<div class='px-6 py-4 bg-gray-50 dark:bg-gray-800 border-t border-gray-200 dark:border-gray-700'>";
+        $html .= "<div class='flex flex-wrap items-center gap-2'>";
+        
+        if (!empty($details['homepage'])) {
+            $html .= "<a href='" . htmlspecialchars($details['homepage']) . "' target='_blank' rel='noopener' class='inline-flex items-center gap-2 px-4 py-2 text-sm font-semibold text-white bg-blue-600 hover:bg-blue-700 dark:bg-blue-600 dark:hover:bg-blue-700 rounded-lg shadow-sm hover:shadow transition-all duration-200'>";
+            $html .= "<svg class='w-4 h-4' fill='none' stroke='currentColor' viewBox='0 0 24 24'><path stroke-linecap='round' stroke-linejoin='round' stroke-width='2' d='M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14'/></svg>";
+            $html .= "Homepage</a>";
+        }
+        
+        if (!empty($details['github_path'])) {
+            $html .= "<a href='https://github.com/" . htmlspecialchars($details['github_path']) . "' target='_blank' rel='noopener' class='inline-flex items-center gap-2 px-4 py-2 text-sm font-semibold text-gray-900 dark:text-white bg-gray-200 dark:bg-gray-700 hover:bg-gray-300 dark:hover:bg-gray-600 rounded-lg shadow-sm hover:shadow transition-all duration-200'>";
+            $html .= "<svg class='w-4 h-4' fill='currentColor' viewBox='0 0 24 24'><path d='M12 0c-6.626 0-12 5.373-12 12 0 5.302 3.438 9.8 8.207 11.387.599.111.793-.261.793-.577v-2.234c-3.338.726-4.033-1.416-4.033-1.416-.546-1.387-1.333-1.756-1.333-1.756-1.089-.745.083-.729.083-.729 1.205.084 1.839 1.237 1.839 1.237 1.07 1.834 2.807 1.304 3.492.997.107-.775.418-1.305.762-1.604-2.665-.305-5.467-1.334-5.467-5.931 0-1.311.469-2.381 1.236-3.221-.124-.303-.535-1.524.117-3.176 0 0 1.008-.322 3.301 1.23.957-.266 1.983-.399 3.003-.404 1.02.005 2.047.138 3.006.404 2.291-1.552 3.297-1.23 3.297-1.23.653 1.653.242 2.874.118 3.176.77.84 1.235 1.911 1.235 3.221 0 4.609-2.807 5.624-5.479 5.921.43.372.823 1.102.823 2.222v3.293c0 .319.192.694.801.576 4.765-1.589 8.199-6.086 8.199-11.386 0-6.627-5.373-12-12-12z'/></svg>";
+            $html .= "GitHub</a>";
+        }
+        
+        $html .= "<a href='https://mods.factorio.com/mod/" . htmlspecialchars($details['name']) . "' target='_blank' rel='noopener' class='inline-flex items-center gap-2 px-4 py-2 text-sm font-semibold text-white bg-orange-600 hover:bg-orange-700 dark:bg-orange-600 dark:hover:bg-orange-700 rounded-lg shadow-sm hover:shadow transition-all duration-200'>";
+        $html .= "<svg class='w-4 h-4' fill='none' stroke='currentColor' viewBox='0 0 24 24'><path stroke-linecap='round' stroke-linejoin='round' stroke-width='2' d='M13 10V3L4 14h7v7l9-11h-7z'/></svg>";
+        $html .= "Mod Portal</a>";
+        
+        $html .= "</div></div>";
+        $html .= "</div>";
+        
+        return new \Illuminate\Support\HtmlString($html);
+    }
+
+    public bool $isExperimental = false;
+
+    #[Computed]
+    public function filteredInstalledMods(): array
+    {
+        $mods = $this->installedMods;
+        
+        // Search Filter
+        if (!empty($this->installedModsSearch)) {
+            $search = strtolower($this->installedModsSearch);
+            $mods = array_filter($mods, function($mod) use ($search) {
+                $title = strtolower($mod['title'] ?? $mod['name']);
+                $name = strtolower($mod['name']);
+                $summary = strtolower($mod['summary'] ?? '');
+                return str_contains($title, $search) || str_contains($name, $search) || str_contains($summary, $search);
+            });
+        }
+        
+        // Status Filter
+        switch ($this->installedModsFilter) {
+            case 'enabled':
+                $mods = array_filter($mods, fn($mod) => !empty($this->modStates[$mod['name']]));
+                break;
+            case 'disabled':
+                $mods = array_filter($mods, fn($mod) => empty($this->modStates[$mod['name']]) && $mod['name'] !== 'base');
+                break;
+            case 'updates':
+                $mods = array_filter($mods, fn($mod) => !empty($mod['update_available']));
+                break;
+        }
+        
+        // Sorting
+        usort($mods, function($a, $b) {
+            switch ($this->installedModsSort) {
+                case 'version':
+                    return version_compare($b['version'] ?? '0', $a['version'] ?? '0');
+                case 'status':
+                    $aEnabled = !empty($this->modStates[$a['name']]) ? 1 : 0;
+                    $bEnabled = !empty($this->modStates[$b['name']]) ? 1 : 0;
+                    return $bEnabled - $aEnabled;
+                default: // name
+                    return strcasecmp($a['title'] ?? $a['name'], $b['title'] ?? $b['name']);
+            }
+        });
+        
+        return array_values($mods);
     }
 
     public function loadFactorioVersion(): void
@@ -82,7 +339,19 @@ class FactorioModInstaller extends Page
                 if ($variable->env_variable === 'FACTORIO_VERSION') {
                     $version = $variable->server_value ?? $variable->variable_value ?? null;
                     if ($version && $version !== 'latest') {
-                        $this->factorioVersion = $version;
+                        // Check if experimental version
+                        if (str_contains(strtolower($version), 'experimental')) {
+                            $this->isExperimental = true;
+                            // Extract version number from experimental string
+                            if (preg_match('/(\d+\.\d+)/', $version, $matches)) {
+                                $this->factorioVersion = $matches[1];
+                            } else {
+                                $this->factorioVersion = '2.0';
+                            }
+                        } else {
+                            $this->factorioVersion = $version;
+                            $this->isExperimental = false;
+                        }
                         return;
                     }
                 }
@@ -90,8 +359,10 @@ class FactorioModInstaller extends Page
             
             // Default to latest major version
             $this->factorioVersion = '2.0';
+            $this->isExperimental = false;
         } catch (\Exception $e) {
             $this->factorioVersion = '2.0';
+            $this->isExperimental = false;
         }
     }
 
@@ -309,8 +580,10 @@ class FactorioModInstaller extends Page
                             
                             // Check if update available by comparing versions
                             $mod['update_available'] = false;
+                            $mod['latest_version_display'] = null;
                             if ($installedVersion && $mod['latest_version'] && version_compare($mod['latest_version'], $installedVersion, '>')) {
-                                $mod['update_available'] = true;
+                                $mod['update_available'] = $mod['latest_version']; // Store the actual version string
+                                $mod['latest_version_display'] = $mod['latest_version'];
                             }
                             
                             if ($mod['update_available']) {
@@ -342,7 +615,111 @@ class FactorioModInstaller extends Page
     public function loadCacheStats(): void
     {
         $service = new FactorioModPortalService();
-        $this->cacheStats = $service->getCacheStats();
+        $this->cacheStats = $service->getCacheInfo();
+    }
+
+    public function validateModName(): void
+    {
+        if (empty($this->directInstallModName)) {
+            $this->modNameValid = null;
+            $this->modDetailsPreview = null;
+            $this->showModDetails = false;
+            return;
+        }
+
+        $this->validatingModName = true;
+        $this->modNameValid = null;
+        
+        try {
+            $service = app(FactorioModPortalService::class);
+            $modDetails = $service->getModDetails($this->directInstallModName, true);
+            
+            if ($modDetails) {
+                $this->modNameValid = true;
+                $this->modDetailsPreview = [
+                    'name' => $modDetails['name'],
+                    'title' => $modDetails['title'] ?? $modDetails['name'],
+                    'summary' => $modDetails['summary'] ?? '',
+                    'owner' => $modDetails['owner'] ?? '',
+                    'downloads_count' => $modDetails['downloads_count'] ?? 0,
+                    'category' => $modDetails['category'] ?? '',
+                    'homepage' => $modDetails['homepage'] ?? null,
+                    'github_path' => $modDetails['github_path'] ?? null,
+                ];
+                $this->showModDetails = true;
+            } else {
+                $this->modNameValid = false;
+                $this->modDetailsPreview = null;
+                $this->showModDetails = false;
+            }
+        } catch (\Exception $e) {
+            $this->modNameValid = false;
+            $this->modDetailsPreview = null;
+            $this->showModDetails = false;
+        } finally {
+            $this->validatingModName = false;
+        }
+    }
+
+    public function loadAvailableVersions(): void
+    {
+        if (empty($this->directInstallModName)) {
+            $this->availableVersions = [];
+            $this->selectedVersion = null;
+            return;
+        }
+
+        // Validate mod name first if not already validated
+        if ($this->modNameValid === null) {
+            $this->validateModName();
+        }
+
+        $this->loadingVersions = true;
+        
+        try {
+            $service = app(FactorioModPortalService::class);
+            $modDetails = $service->getModDetails($this->directInstallModName, true);
+            
+            if (!$modDetails || empty($modDetails['releases'])) {
+                $this->availableVersions = [];
+                $this->selectedVersion = null;
+                return;
+            }
+            
+            // Sort releases by date (newest first)
+            $releases = $modDetails['releases'];
+            usort($releases, function($a, $b) {
+                return strtotime($b['released_at'] ?? '1970-01-01') <=> strtotime($a['released_at'] ?? '1970-01-01');
+            });
+            
+            // Build version list with compatibility info
+            $this->availableVersions = array_map(function($release) {
+                $factorioVersion = $release['info_json']['factorio_version'] ?? 'unknown';
+                $isCompatible = $this->isVersionCompatible($factorioVersion);
+                
+                return [
+                    'version' => $release['version'],
+                    'factorio_version' => $factorioVersion,
+                    'released_at' => $release['released_at'] ?? null,
+                    'is_compatible' => $isCompatible,
+                ];
+            }, $releases);
+            
+            // Auto-select latest compatible version
+            foreach ($this->availableVersions as $version) {
+                if ($version['is_compatible']) {
+                    $this->selectedVersion = $version['version'];
+                    break;
+                }
+            }
+            
+        } catch (\Exception $e) {
+            Log::error('Error loading versions: ' . $e->getMessage());
+            $this->availableVersions = [];
+            $this->selectedVersion = null;
+        } finally {
+            $this->loadingVersions = false;
+        }
     }
 
     public function installModByName(): void
@@ -356,51 +733,58 @@ class FactorioModInstaller extends Page
         }
 
         try {
-            $service = new FactorioModPortalService();
-            $modDetails = $service->getModDetails($this->directInstallModName, true);
+            // Use selected version or find latest compatible
+            $versionToInstall = $this->selectedVersion;
             
-            if (!$modDetails || !isset($modDetails['releases'])) {
-                Notification::make()
-                    ->title(__('factorio-mod-installer::factorio-mod-installer.notifications.mod_not_found'))
-                    ->body('Use the exact mod name from the URL: https://mods.factorio.com/mod/ModName → "ModName"')
-                    ->danger()
-                    ->send();
-                return;
-            }
-
-            // Find the latest compatible release
-            $latestRelease = null;
-            
-            // Sort releases by date to get newest first
-            usort($modDetails['releases'], function($a, $b) {
-                $timeA = strtotime($a['released_at'] ?? '1970-01-01');
-                $timeB = strtotime($b['released_at'] ?? '1970-01-01');
-                return $timeB <=> $timeA;
-            });
-            
-            foreach ($modDetails['releases'] as $release) {
-                if ($this->isVersionCompatible($release['info_json']['factorio_version'] ?? '0.0')) {
-                    $latestRelease = $release;
-                    break;
+            if (!$versionToInstall) {
+                $service = new FactorioModPortalService();
+                $modDetails = $service->getModDetails($this->directInstallModName, true);
+                
+                if (!$modDetails || !isset($modDetails['releases'])) {
+                    Notification::make()
+                        ->title(__('factorio-mod-installer::factorio-mod-installer.notifications.mod_not_found'))
+                        ->body('Use the exact mod name from the URL: https://mods.factorio.com/mod/ModName → "ModName"')
+                        ->danger()
+                        ->send();
+                    return;
                 }
-            }
 
-            if (!$latestRelease) {
-                Notification::make()
-                    ->title(__('factorio-mod-installer::factorio-mod-installer.notifications.no_compatible_version'))
-                    ->danger()
-                    ->send();
-                return;
+                // Find the latest compatible release
+                $latestRelease = null;
+                
+                // Sort releases by date to get newest first
+                usort($modDetails['releases'], function($a, $b) {
+                    $timeA = strtotime($a['released_at'] ?? '1970-01-01');
+                    $timeB = strtotime($b['released_at'] ?? '1970-01-01');
+                    return $timeB <=> $timeA;
+                });
+                
+                foreach ($modDetails['releases'] as $release) {
+                    if ($this->isVersionCompatible($release['info_json']['factorio_version'] ?? '0.0')) {
+                        $latestRelease = $release;
+                        break;
+                    }
+                }
+
+                if (!$latestRelease) {
+                    Notification::make()
+                        ->title(__('factorio-mod-installer::factorio-mod-installer.notifications.no_compatible_version'))
+                        ->danger()
+                        ->send();
+                    return;
+                }
+                
+                $versionToInstall = $latestRelease['version'];
             }
 
             // Install the mod
-            $this->installMod($this->directInstallModName, $latestRelease['version']);
+            $this->installMod($this->directInstallModName, $versionToInstall);
             $this->directInstallModName = '';
-            
-            Notification::make()
-                ->title(__('factorio-mod-installer::factorio-mod-installer.notifications.installed'))
-                ->success()
-                ->send();
+            $this->selectedVersion = null;
+            $this->availableVersions = [];
+            $this->modNameValid = null;
+            $this->modDetailsPreview = null;
+            $this->showModDetails = false;
             
         } catch (\Exception $e) {
             Log::error('Error installing mod by name: ' . $e->getMessage());
@@ -420,21 +804,23 @@ class FactorioModInstaller extends Page
             $service = app(FactorioModPortalService::class);
             
             if ($this->searchQuery) {
-                // When searching, use searchMods which will search all pages for queries with 3+ chars
-                $result = $service->searchMods($this->searchQuery);
+                // Search with optional category filter
+                $result = $service->searchMods(
+                    $this->searchQuery,
+                    $this->selectedCategory,
+                    'downloads_count',
+                    'desc',
+                    100
+                );
+            } elseif ($this->selectedCategory) {
+                // Get mods by category when no search query
+                $result = $service->getModsByCategory($this->selectedCategory, 1, 100);
             } else {
-                // For popular mods, show 100
+                // Show popular mods by default
                 $result = $service->getPopularMods(1, 100);
             }
             
             $allMods = $result['results'] ?? [];
-            
-            // Filter by category if selected
-            if ($this->selectedCategory) {
-                $allMods = array_filter($allMods, function($mod) {
-                    return ($mod['category'] ?? null) === $this->selectedCategory;
-                });
-            }
             
             // Filter mods by Factorio version compatibility
             $this->browseMods = array_filter($allMods, function($mod) {
@@ -452,6 +838,9 @@ class FactorioModInstaller extends Page
                 return $this->isVersionCompatible($factorioVersion, $this->factorioVersion);
             });
             
+            // Re-index array after filtering
+            $this->browseMods = array_values($this->browseMods);
+            
         } catch (\Exception $e) {
             Notification::make()
                 ->title('Error browsing mods')
@@ -467,6 +856,14 @@ class FactorioModInstaller extends Page
     {
         if ($serverVersion === null) {
             $serverVersion = $this->factorioVersion ?? '2.0';
+        }
+        
+        // For experimental versions, only check if mod supports 2.0+
+        if ($this->isExperimental) {
+            $required = explode('.', $requiredVersion);
+            $requiredMajor = (int)($required[0] ?? 0);
+            // Accept any mod that supports 2.0 or higher
+            return $requiredMajor >= 2;
         }
         
         // Extract major.minor versions
@@ -493,17 +890,55 @@ class FactorioModInstaller extends Page
             
             $modListService = app(ModListService::class);
             
-            if ($modListService->addMod($server, $modName, true, $version)) {
+            // Show warning for experimental versions
+            if ($this->isExperimental) {
                 Notification::make()
-                    ->title(__('factorio-mod-installer::factorio-mod-installer.notifications.installed'))
+                    ->title(__('factorio-mod-installer::factorio-mod-installer.notifications.experimental_warning'))
+                    ->body(__('factorio-mod-installer::factorio-mod-installer.notifications.experimental_warning_body'))
+                    ->warning()
+                    ->send();
+            }
+            
+            // Install with dependencies
+            $installed = [];
+            $results = $modListService->installModWithDependencies($server, $modName, true, $version, $installed);
+            
+            // Build notification message
+            $installedCount = count($results['installed']);
+            $failedCount = count($results['failed']);
+            
+            if ($installedCount > 0) {
+                $message = $installedCount === 1 
+                    ? __('factorio-mod-installer::factorio-mod-installer.notifications.installed')
+                    : __('factorio-mod-installer::factorio-mod-installer.notifications.installed_with_deps', ['count' => $installedCount]);
+                
+                $body = null;
+                if ($installedCount > 1) {
+                    $body = __('factorio-mod-installer::factorio-mod-installer.notifications.installed_mods') . ': ' . implode(', ', $results['installed']);
+                }
+                
+                Notification::make()
+                    ->title($message)
+                    ->body($body)
                     ->success()
                     ->send();
-                    
-                $this->loadInstalledMods();
-                $this->loadBrowseMods();
-            } else {
+            }
+            
+            if ($failedCount > 0) {
+                Notification::make()
+                    ->title(__('factorio-mod-installer::factorio-mod-installer.notifications.some_failed'))
+                    ->body(__('factorio-mod-installer::factorio-mod-installer.notifications.failed_mods') . ': ' . implode(', ', $results['failed']))
+                    ->warning()
+                    ->send();
+            }
+            
+            if ($installedCount === 0 && $failedCount === 0) {
                 throw new \Exception('Failed to add mod to mod-list.json. Please ensure the server has been started at least once.');
             }
+            
+            $this->loadInstalledMods();
+            $this->loadBrowseMods();
+            
         } catch (\Exception $e) {
             Notification::make()
                 ->title(__('factorio-mod-installer::factorio-mod-installer.notifications.error'))

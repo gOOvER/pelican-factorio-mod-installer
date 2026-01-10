@@ -23,6 +23,7 @@ class FactorioModInstallerServiceProvider extends ServiceProvider
      */
     public function boot(): void
     {
-        // Views, translations, routes, and migrations are automatically loaded by the plugin system
+        // Views and translations are automatically discovered by the plugin system
+        // No manual registration needed
     }
 }

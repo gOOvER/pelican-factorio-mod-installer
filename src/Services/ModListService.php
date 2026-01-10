@@ -154,6 +154,111 @@ class ModListService
     }
 
     /**
+     * Install mod with dependencies recursively
+     */
+    public function installModWithDependencies(Server $server, string $modName, bool $enabled = true, ?string $version = null, array &$installed = []): array
+    {
+        $results = ['installed' => [], 'skipped' => [], 'failed' => []];
+        
+        // Prevent circular dependencies
+        if (in_array($modName, $installed)) {
+            $results['skipped'][] = $modName;
+            return $results;
+        }
+        
+        try {
+            // Get mod details to check dependencies
+            $modDetails = $this->modPortalService->getModDetails($modName, true);
+            if (!$modDetails || empty($modDetails['releases'])) {
+                $results['failed'][] = $modName;
+                return $results;
+            }
+            
+            // Get the release (specified version or latest)
+            $release = null;
+            if ($version) {
+                foreach ($modDetails['releases'] as $r) {
+                    if ($r['version'] === $version) {
+                        $release = $r;
+                        break;
+                    }
+                }
+            } else {
+                // Sort by date and get newest
+                $releases = $modDetails['releases'];
+                usort($releases, function($a, $b) {
+                    return strtotime($b['released_at'] ?? '1970-01-01') <=> strtotime($a['released_at'] ?? '1970-01-01');
+                });
+                $release = $releases[0] ?? null;
+            }
+            
+            if (!$release) {
+                $results['failed'][] = $modName;
+                return $results;
+            }
+            
+            // Parse and install dependencies first
+            $dependencies = $release['info_json']['dependencies'] ?? [];
+            foreach ($dependencies as $depString) {
+                if (!is_string($depString)) continue;
+                
+                // Parse dependency: "? mod-name >= 1.0.0" or "! mod-name"
+                $depString = trim($depString);
+                $isOptional = str_starts_with($depString, '?') || str_starts_with($depString, '~');
+                $isIncompatible = str_starts_with($depString, '!');
+                
+                // Skip optional and incompatible dependencies
+                if ($isOptional || $isIncompatible) {
+                    continue;
+                }
+                
+                // Remove prefix and extract name
+                $depString = ltrim($depString, '?!~ ');
+                if (preg_match('/^([^\s>=<]+)/', $depString, $matches)) {
+                    $depName = $matches[1];
+                    
+                    // Skip base mod
+                    if ($depName === 'base') continue;
+                    
+                    // Check if already installed
+                    $modList = $this->readModList($server);
+                    $alreadyInstalled = false;
+                    foreach ($modList['mods'] as $mod) {
+                        if ($mod['name'] === $depName) {
+                            $alreadyInstalled = true;
+                            break;
+                        }
+                    }
+                    
+                    if (!$alreadyInstalled) {
+                        Log::info("Installing dependency: {$depName} for {$modName}");
+                        $depResults = $this->installModWithDependencies($server, $depName, true, null, $installed);
+                        
+                        // Merge results
+                        $results['installed'] = array_merge($results['installed'], $depResults['installed']);
+                        $results['skipped'] = array_merge($results['skipped'], $depResults['skipped']);
+                        $results['failed'] = array_merge($results['failed'], $depResults['failed']);
+                    }
+                }
+            }
+            
+            // Now install the mod itself
+            if ($this->addMod($server, $modName, $enabled, $version)) {
+                $results['installed'][] = $modName;
+                $installed[] = $modName;
+            } else {
+                $results['failed'][] = $modName;
+            }
+            
+        } catch (\Exception $e) {
+            Log::error("Error installing {$modName} with dependencies: " . $e->getMessage());
+            $results['failed'][] = $modName;
+        }
+        
+        return $results;
+    }
+
+    /**
      * Add or update a mod in the mod list and download the mod file
      */
     public function addMod(Server $server, string $modName, bool $enabled = true, ?string $version = null): bool

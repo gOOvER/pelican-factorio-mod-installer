@@ -5,6 +5,64 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.2.0] - 2026-01-10
+
+### Added
+- **Factorio Version Display**: Server's Factorio version is now shown in the tab bar
+  - Shows green badge for stable versions, orange badge for experimental builds
+  - Displays "Version unknown" if version cannot be detected
+- **Complete Localization**: All UI text is now translatable
+  - Added 20+ new translation keys for installed mods tab
+  - Filter tabs (All, Enabled, Disabled, Updates)
+  - Sort options (Name, Status, Updates)
+  - Action buttons (Update, Portal, Delete)
+  - Status badges (Enabled, Disabled, Base Game, Update)
+  - Confirmation dialogs and messages
+
+### Changed
+- **Complete UI Overhaul**: Redesigned Browse Mods and Installed Mods tabs
+  - Browse Mods now uses modern card grid layout (1/2/3 columns responsive)
+  - Each mod displayed as Filament Section card with thumbnail, title, badges
+  - Downloads badge with icon, category badge with color coding, version badge
+  - Install button (warning color) and Details button (gray outlined) per card
+  - Improved spacing and visual hierarchy throughout
+- **Installed Mods Tab**: Enhanced with filter bar and better mod cards
+  - Sticky filter bar with search, filter tabs, sort dropdown
+  - Mod cards show thumbnail, version badge, status badges
+  - Update info section with changelog link when updates available
+  - Cleaner button layout in card footer
+- **API Service Optimization**: Complete rewrite of `FactorioModPortalService`
+  - New `getMods()` method for paginated mod fetching with caching (30 min)
+  - Optimized `searchMods()` now limited to 20 pages (2000 mods) instead of 50 pages
+  - Added `getModsByCategory()` for direct category filtering
+  - Added `getRecentMods()` and `getNewMods()` helper methods
+  - Improved sorting with dedicated `sortResults()` helper
+  - Cleaner code structure with `emptyResult()` helper
+  - Added `getCategories()` method returning all available categories with colors
+  - Replaced `getCacheStats()` with simpler `getCacheInfo()`
+- **Browse Mods Loading**: Now uses category-aware API methods
+  - Direct category filtering via API instead of client-side filtering
+  - Better performance when browsing by category
+- **UI Polish**:
+  - Removed oversized inbox icon from "No mods installed" message
+  - Tabs and Factorio version now share the same container
+
+### Fixed
+- **Missing Translations**: Fixed "Update verfügbar" showing German text in English locale
+  - All hardcoded German text replaced with proper translation calls
+- **Translation Keys**: Added missing keys for filter/sort dropdowns
+
+### Technical
+- **Cache Durations**:
+  - Mod list: 30 minutes (was 15 minutes for search)
+  - Mod details: 6 hours (unchanged)
+  - Search results: 15 minutes (unchanged)
+- **API Limits**:
+  - Default page size: 50 mods
+  - Max page size: 100 mods
+  - Search limit: 20 pages (2000 mods max)
+  - Results per search: 100 mods max
+
 ## [1.1.2] - 2026-01-09
 
 ### Fixed

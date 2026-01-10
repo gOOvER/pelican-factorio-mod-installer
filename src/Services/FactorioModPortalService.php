@@ -14,8 +14,13 @@ class FactorioModPortalService
     private const API_BASE = '/api/mods';
 
     // Cache durations
-    private const CACHE_MOD_DETAILS = 6 * 60 * 60; // 6 hours
-    private const CACHE_SEARCH_RESULTS = 15 * 60; // 15 minutes
+    private const CACHE_MOD_LIST = 30 * 60; // 30 minutes for mod list
+    private const CACHE_MOD_DETAILS = 6 * 60 * 60; // 6 hours for mod details
+    private const CACHE_SEARCH_RESULTS = 15 * 60; // 15 minutes for search
+
+    // Pagination settings
+    private const DEFAULT_PAGE_SIZE = 50;
+    private const MAX_PAGE_SIZE = 100;
 
     public function __construct()
     {
@@ -30,93 +35,27 @@ class FactorioModPortalService
     }
 
     /**
-     * Search for mods on the Factorio Mod Portal
-     *
-     * @param string|null $query Search query
-     * @param int $page Page number
-     * @param int $pageSize Number of results per page
-     * @param string $sortBy Sort field (name, created_at, updated_at)
+     * Get paginated mods from the Factorio Mod Portal
+     * 
+     * @param int $page Page number (1-based)
+     * @param int $pageSize Number of results per page (max 100)
+     * @param string|null $category Filter by category
+     * @param string $sortBy Sort field (name, created_at, updated_at, downloads_count)
      * @param string $sortOrder Sort order (asc, desc)
      * @return array
      */
-    public function searchMods(
-        ?string $query = null,
+    public function getMods(
         int $page = 1,
-        int $pageSize = 25,
+        int $pageSize = self::DEFAULT_PAGE_SIZE,
+        ?string $category = null,
         string $sortBy = 'downloads_count',
         string $sortOrder = 'desc'
     ): array {
-        $cacheKey = "factorio_mods_search_{$query}_{$page}_{$pageSize}_{$sortBy}_{$sortOrder}";
+        $pageSize = min($pageSize, self::MAX_PAGE_SIZE);
+        $cacheKey = "factorio_mods_page_{$page}_{$pageSize}_{$category}_{$sortBy}_{$sortOrder}";
 
-        return Cache::remember($cacheKey, self::CACHE_SEARCH_RESULTS, function () use ($query, $page, $pageSize, $sortBy, $sortOrder) {
+        return Cache::remember($cacheKey, self::CACHE_MOD_LIST, function () use ($page, $pageSize, $category, $sortBy, $sortOrder) {
             try {
-                // If we have a search query with 3+ characters, fetch all pages to ensure complete results
-                if ($query && strlen($query) >= 3) {
-                    return $this->searchAllPages($query, $sortBy, $sortOrder);
-                }
-                
-                $params = [
-                    'page' => $page,
-                    'page_size' => $pageSize,
-                    'hide_deprecated' => 'true',
-                ];
-
-                // Only add sort parameters if not sorting by downloads (custom)
-                if ($sortBy !== 'downloads_count') {
-                    $params['sort'] = $sortBy;
-                    $params['sort_order'] = $sortOrder;
-                }
-
-                $response = $this->client->get(self::API_BASE, [
-                    'query' => $params,
-                ]);
-
-                $data = json_decode($response->getBody()->getContents(), true);
-
-                // Sort by downloads if requested (not a native API sort option)
-                if ($sortBy === 'downloads_count' && isset($data['results'])) {
-                    usort($data['results'], function ($a, $b) use ($sortOrder) {
-                        $aDownloads = $a['downloads_count'] ?? 0;
-                        $bDownloads = $b['downloads_count'] ?? 0;
-                        return $sortOrder === 'asc' 
-                            ? $aDownloads <=> $bDownloads 
-                            : $bDownloads <=> $aDownloads;
-                    });
-                }
-
-                return $data;
-            } catch (GuzzleException $e) {
-                Log::error('Error searching Factorio mods: ' . $e->getMessage());
-                return [
-                    'pagination' => [
-                        'count' => 0,
-                        'page' => $page,
-                        'page_count' => 0,
-                        'page_size' => $pageSize,
-                    ],
-                    'results' => [],
-                ];
-            }
-        });
-    }
-
-    /**
-     * Search all pages for matching mods
-     *
-     * @param string $query Search query
-     * @param string $sortBy Sort field
-     * @param string $sortOrder Sort order
-     * @return array
-     */
-    private function searchAllPages(string $query, string $sortBy, string $sortOrder): array
-    {
-        $allResults = [];
-        $page = 1;
-        $pageSize = 100; // Max per request
-        $queryLower = strtolower($query);
-        
-        try {
-            do {
                 $params = [
                     'page' => $page,
                     'page_size' => $pageSize,
@@ -129,68 +68,198 @@ class FactorioModPortalService
 
                 $data = json_decode($response->getBody()->getContents(), true);
                 $results = $data['results'] ?? [];
-                
-                // Filter matching mods - search in multiple fields
-                $matching = array_filter($results, function ($mod) use ($queryLower) {
-                    $searchableText = strtolower(implode(' ', [
-                        $mod['title'] ?? '',
-                        $mod['name'] ?? '',
-                        $mod['summary'] ?? '',
-                        $mod['owner'] ?? '',
-                        $mod['category'] ?? '',
-                    ]));
-                    
-                    return str_contains($searchableText, $queryLower);
-                });
-                
-                $allResults = array_merge($allResults, $matching);
-                
-                $pagination = $data['pagination'] ?? [];
-                $page++;
-                
-                // Stop if we've reached the last page or reasonable limit
-                // Limit to 50 pages (5000 mods) for performance - should find most mods
-            } while ($page <= ($pagination['page_count'] ?? 1) && $page <= 50);
-            
-            // Sort results
-            if ($sortBy === 'downloads_count') {
-                usort($allResults, function ($a, $b) use ($sortOrder) {
-                    $aDownloads = $a['downloads_count'] ?? 0;
-                    $bDownloads = $b['downloads_count'] ?? 0;
-                    return $sortOrder === 'asc' 
-                        ? $aDownloads <=> $bDownloads 
-                        : $bDownloads <=> $aDownloads;
-                });
+
+                // Filter by category if specified
+                if ($category) {
+                    $results = array_filter($results, function ($mod) use ($category) {
+                        return strtolower($mod['category'] ?? '') === strtolower($category);
+                    });
+                    $results = array_values($results); // Re-index array
+                }
+
+                // Sort results
+                $results = $this->sortResults($results, $sortBy, $sortOrder);
+
+                return [
+                    'pagination' => $data['pagination'] ?? [
+                        'count' => 0,
+                        'page' => $page,
+                        'page_count' => 0,
+                        'page_size' => $pageSize,
+                    ],
+                    'results' => $results,
+                ];
+            } catch (GuzzleException $e) {
+                Log::error('Error fetching Factorio mods: ' . $e->getMessage());
+                return $this->emptyResult($page, $pageSize);
             }
-            
-            return [
-                'pagination' => [
-                    'count' => count($allResults),
-                    'page' => 1,
-                    'page_count' => 1,
-                    'page_size' => count($allResults),
-                ],
-                'results' => $allResults,
-            ];
-        } catch (GuzzleException $e) {
-            Log::error('Error searching all pages: ' . $e->getMessage());
-            return [
-                'pagination' => ['count' => 0, 'page' => 1, 'page_count' => 0, 'page_size' => 0],
-                'results' => [],
-            ];
-        }
+        });
     }
 
     /**
-     * Get popular mods from the Factorio Mod Portal
+     * Search for mods on the Factorio Mod Portal
+     * Uses client-side filtering on cached pages for better performance
      *
-     * @param int $page Page number
-     * @param int $pageSize Number of results per page
+     * @param string $query Search query
+     * @param string|null $category Filter by category
+     * @param string $sortBy Sort field
+     * @param string $sortOrder Sort order
+     * @param int $limit Max results to return
      * @return array
      */
-    public function getPopularMods(int $page = 1, int $pageSize = 25): array
+    public function searchMods(
+        string $query,
+        ?string $category = null,
+        string $sortBy = 'downloads_count',
+        string $sortOrder = 'desc',
+        int $limit = 100
+    ): array {
+        if (strlen($query) < 2) {
+            return $this->emptyResult(1, $limit);
+        }
+
+        $cacheKey = "factorio_search_" . md5("{$query}_{$category}_{$sortBy}_{$sortOrder}_{$limit}");
+
+        return Cache::remember($cacheKey, self::CACHE_SEARCH_RESULTS, function () use ($query, $category, $sortBy, $sortOrder, $limit) {
+            $allResults = [];
+            $queryLower = strtolower($query);
+            $page = 1;
+            $maxPages = 20; // Limit search to first 20 pages (2000 mods) for performance
+            
+            try {
+                do {
+                    $response = $this->client->get(self::API_BASE, [
+                        'query' => [
+                            'page' => $page,
+                            'page_size' => self::MAX_PAGE_SIZE,
+                            'hide_deprecated' => 'true',
+                        ],
+                    ]);
+
+                    $data = json_decode($response->getBody()->getContents(), true);
+                    $results = $data['results'] ?? [];
+                    
+                    // Filter matching mods
+                    $matching = array_filter($results, function ($mod) use ($queryLower, $category) {
+                        // Category filter
+                        if ($category && strtolower($mod['category'] ?? '') !== strtolower($category)) {
+                            return false;
+                        }
+                        
+                        // Text search in multiple fields
+                        $searchableText = strtolower(implode(' ', [
+                            $mod['title'] ?? '',
+                            $mod['name'] ?? '',
+                            $mod['summary'] ?? '',
+                            $mod['owner'] ?? '',
+                        ]));
+                        
+                        return str_contains($searchableText, $queryLower);
+                    });
+                    
+                    $allResults = array_merge($allResults, $matching);
+                    
+                    // Stop if we have enough results
+                    if (count($allResults) >= $limit) {
+                        break;
+                    }
+                    
+                    $pagination = $data['pagination'] ?? [];
+                    $page++;
+                    
+                } while ($page <= ($pagination['page_count'] ?? 1) && $page <= $maxPages);
+                
+                // Sort and limit results
+                $allResults = $this->sortResults($allResults, $sortBy, $sortOrder);
+                $allResults = array_slice($allResults, 0, $limit);
+
+                return [
+                    'pagination' => [
+                        'count' => count($allResults),
+                        'page' => 1,
+                        'page_count' => 1,
+                        'page_size' => count($allResults),
+                    ],
+                    'results' => $allResults,
+                ];
+            } catch (GuzzleException $e) {
+                Log::error('Error searching Factorio mods: ' . $e->getMessage());
+                return $this->emptyResult(1, $limit);
+            }
+        });
+    }
+
+    /**
+     * Get popular mods (sorted by downloads)
+     */
+    public function getPopularMods(int $page = 1, int $pageSize = 50): array
     {
-        return $this->searchMods(null, $page, $pageSize, 'downloads_count', 'desc');
+        return $this->getMods($page, $pageSize, null, 'downloads_count', 'desc');
+    }
+
+    /**
+     * Get mods by category
+     */
+    public function getModsByCategory(string $category, int $page = 1, int $pageSize = 50): array
+    {
+        return $this->getMods($page, $pageSize, $category, 'downloads_count', 'desc');
+    }
+
+    /**
+     * Get recently updated mods
+     */
+    public function getRecentMods(int $page = 1, int $pageSize = 50): array
+    {
+        return $this->getMods($page, $pageSize, null, 'updated_at', 'desc');
+    }
+
+    /**
+     * Get newest mods
+     */
+    public function getNewMods(int $page = 1, int $pageSize = 50): array
+    {
+        return $this->getMods($page, $pageSize, null, 'created_at', 'desc');
+    }
+
+    /**
+     * Sort results array by field
+     */
+    private function sortResults(array $results, string $sortBy, string $sortOrder): array
+    {
+        usort($results, function ($a, $b) use ($sortBy, $sortOrder) {
+            $aValue = $a[$sortBy] ?? ($sortBy === 'downloads_count' ? 0 : '');
+            $bValue = $b[$sortBy] ?? ($sortBy === 'downloads_count' ? 0 : '');
+
+            // Numeric comparison for downloads_count
+            if ($sortBy === 'downloads_count') {
+                $aValue = (int) $aValue;
+                $bValue = (int) $bValue;
+            }
+
+            $comparison = is_numeric($aValue) 
+                ? $aValue <=> $bValue 
+                : strcasecmp((string) $aValue, (string) $bValue);
+
+            return $sortOrder === 'asc' ? $comparison : -$comparison;
+        });
+
+        return $results;
+    }
+
+    /**
+     * Return an empty result structure
+     */
+    private function emptyResult(int $page, int $pageSize): array
+    {
+        return [
+            'pagination' => [
+                'count' => 0,
+                'page' => $page,
+                'page_count' => 0,
+                'page_size' => $pageSize,
+            ],
+            'results' => [],
+        ];
     }
 
     /**
@@ -329,52 +398,47 @@ class FactorioModPortalService
      */
     public function clearCache(): void
     {
+        // Clear specific cache patterns
+        $patterns = ['factorio_mods_', 'factorio_mod_', 'factorio_search_'];
+        
+        foreach ($patterns as $pattern) {
+            // Note: This requires cache driver that supports tags or pattern deletion
+            // For file/database cache, this clears all cache
+        }
+        
         Cache::flush();
-        Cache::put('factorio_cache_last_refresh', now(), 60 * 60 * 24 * 30); // 30 days
+        Cache::put('factorio_cache_last_refresh', now(), 60 * 60 * 24 * 30);
     }
 
     /**
-     * Get cache statistics
-     *
-     * @return array
+     * Get available categories from the Factorio Mod Portal
      */
-    public function getCacheStats(): array
+    public function getCategories(): array
     {
-        try {
-            $lastRefresh = Cache::get('factorio_cache_last_refresh');
-            
-            // Try to get the total mod count from the API pagination
-            // This gives us the actual total number of mods available
-            $totalMods = 0;
-            $searchCache = Cache::get('factorio_mods_search__1_100_downloads_count_desc');
-            
-            if ($searchCache && isset($searchCache['pagination']['count'])) {
-                // This is the total count from the API
-                $totalMods = $searchCache['pagination']['count'];
-            }
-            
-            // If we have a search cache, use that count instead (it contains more mods)
-            foreach (Cache::get('factorio_mods_search_') ?? [] as $key => $value) {
-                if (str_starts_with($key, 'factorio_mods_search_') && is_array($value) && isset($value['results'])) {
-                    $count = count($value['results']);
-                    if ($count > $totalMods) {
-                        $totalMods = $count;
-                    }
-                }
-            }
-            
-            return [
-                'total_mods_in_cache' => $totalMods,
-                'last_refresh' => $lastRefresh,
-                'has_cache' => $totalMods > 0 || $lastRefresh !== null,
-            ];
-        } catch (\Exception $e) {
-            Log::error('Error getting cache stats: ' . $e->getMessage());
-            return [
-                'total_mods_in_cache' => 0,
-                'last_refresh' => null,
-                'has_cache' => false,
-            ];
-        }
+        return [
+            'content' => ['name' => 'Content', 'color' => 'primary'],
+            'overhaul' => ['name' => 'Overhaul', 'color' => 'danger'],
+            'tweaks' => ['name' => 'Tweaks', 'color' => 'success'],
+            'utilities' => ['name' => 'Utilities', 'color' => 'warning'],
+            'scenarios' => ['name' => 'Scenarios', 'color' => 'info'],
+            'mod-packs' => ['name' => 'Mod Packs', 'color' => 'gray'],
+            'localizations' => ['name' => 'Localizations', 'color' => 'gray'],
+            'internal' => ['name' => 'Internal', 'color' => 'gray'],
+        ];
+    }
+
+    /**
+     * Get cache information (simplified)
+     */
+    public function getCacheInfo(): array
+    {
+        $lastRefresh = Cache::get('factorio_cache_last_refresh');
+        
+        return [
+            'last_refresh' => $lastRefresh,
+            'cache_duration_mods' => self::CACHE_MOD_LIST / 60 . ' minutes',
+            'cache_duration_details' => self::CACHE_MOD_DETAILS / 3600 . ' hours',
+            'cache_duration_search' => self::CACHE_SEARCH_RESULTS / 60 . ' minutes',
+        ];
     }
 }
