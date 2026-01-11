@@ -30,5 +30,9 @@
   "*": {
     "version": "1.2.3",
     "download_url": "https://github.com/gOOvER/pelican-factorio-mod-installer/releases/download/v1.2.3/factorio-mod-installer-1.2.3.zip"
+  },
+  "*": {
+    "version": "1.2.4",
+    "download_url": "https://github.com/gOOvER/pelican-factorio-mod-installer/releases/download/v1.2.4/factorio-mod-installer-1.2.4.zip"
   }
 }

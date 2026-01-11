@@ -7,6 +7,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.2.4] - 2026-01-11
+
+### Added
+- **Navigation Group**: Mod installer now appears in a collapsible "Factorio" category in the sidebar
+  - Groups together with other Factorio-related panels (e.g., Factorio RCON)
+  - Improves navigation organization for Factorio servers
+- **Manual Update Check**: Added "Check for Updates" button in installed mods tab
+  - Manually triggers update check for all installed mods
+  - Clears cache to fetch fresh version data from Factorio Mod Portal
+  - Shows notification with number of available updates or confirmation that all mods are up-to-date
+  - Button is always visible and disables during loading
+
+### Improved
+- **Update Detection**: Cache is now properly cleared when checking for updates manually
+  - Ensures the latest version information is fetched from the Mod Portal
+  - Fixes issue where updates weren't detected due to cached data
+
 ## [1.2.3] - 2026-01-11
 
 ### Fixed

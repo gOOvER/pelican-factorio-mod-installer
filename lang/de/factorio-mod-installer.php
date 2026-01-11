@@ -28,6 +28,7 @@ return [
         'search_placeholder' => 'Installierte Mods durchsuchen...',
         'update_all' => 'Alle aktualisieren',
         'update_all_confirm' => 'Alle :count Mod(s) aktualisieren?',
+        'check_updates' => 'Nach Updates suchen',
     ],
     'browse' => [
         'title' => 'Mods durchsuchen',

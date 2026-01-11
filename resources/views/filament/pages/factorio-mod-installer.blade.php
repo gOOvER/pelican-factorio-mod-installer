@@ -115,7 +115,17 @@
                             </x-filament::input.select>
                         </x-filament::input.wrapper>
 
-                        {{-- BatchActions (Update All) --}}
+                        {{-- BatchActions (Check for Updates, Update All) --}}
+                        <x-filament::button
+                            wire:click="checkForUpdates"
+                            color="gray"
+                            size="sm"
+                            icon="heroicon-o-arrow-path"
+                            :disabled="$loading"
+                        >
+                            {{ trans('factorio-mod-installer::factorio-mod-installer.installed.check_updates') }}
+                        </x-filament::button>
+                        
                         @if ($updateCount > 0)
                             <x-filament::button
                                 wire:click="updateAllMods"

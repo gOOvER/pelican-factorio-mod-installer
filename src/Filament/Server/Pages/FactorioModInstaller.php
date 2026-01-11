@@ -45,6 +45,11 @@ class FactorioModInstaller extends Page implements Forms\Contracts\HasForms
         return 'Factorio Mods';
     }
 
+    public static function getNavigationGroup(): ?string
+    {
+        return 'Factorio';
+    }
+
     public function getTitle(): string
     {
         return 'Factorio Mod Installer';
@@ -627,6 +632,46 @@ class FactorioModInstaller extends Page implements Forms\Contracts\HasForms
     {
         $service = new FactorioModPortalService();
         $this->cacheStats = $service->getCacheInfo();
+    }
+
+    public function checkForUpdates(): void
+    {
+        $this->loading = true;
+        
+        try {
+            // Clear cache to force fresh data from Mod Portal
+            $modPortalService = app(FactorioModPortalService::class);
+            $modPortalService->clearCache();
+            
+            // Reload mods with fresh data
+            $this->loadInstalledMods();
+            
+            $updateCount = count(array_filter($this->installedMods, fn($m) => !empty($m['update_available'])));
+            
+            if ($updateCount > 0) {
+                Notification::make()
+                    ->title('Updates verfügbar')
+                    ->body("Es wurden {$updateCount} Updates für installierte Mods gefunden.")
+                    ->success()
+                    ->send();
+            } else {
+                Notification::make()
+                    ->title('Keine Updates verfügbar')
+                    ->body('Alle installierten Mods sind auf dem neuesten Stand.')
+                    ->info()
+                    ->send();
+            }
+        } catch (\Exception $e) {
+            Notification::make()
+                ->title('Fehler beim Suchen nach Updates')
+                ->body($e->getMessage())
+                ->danger()
+                ->send();
+            
+            Log::error('Error checking for mod updates: ' . $e->getMessage());
+        } finally {
+            $this->loading = false;
+        }
     }
 
     public function validateModName(): void
