@@ -982,9 +982,9 @@ class FactorioModInstaller extends Page implements Forms\Contracts\HasForms
                 
                 $statusText = $newState ? 'enabled' : 'disabled';
                 
-                // Get mod details to check compatibility
-                $warningMessage = null;
-                if ($newState) { // Only warn when enabling
+                // Get mod details to check compatibility and dependencies
+                $issues = [];
+                if ($newState) { // Only check when enabling
                     try {
                         $modDetails = $modPortalService->getModDetails($modName, true);
                         if ($modDetails && isset($modDetails['releases'])) {
@@ -1002,12 +1002,60 @@ class FactorioModInstaller extends Page implements Forms\Contracts\HasForms
                             if ($installedVersion) {
                                 foreach ($modDetails['releases'] as $release) {
                                     if ($release['version'] === $installedVersion) {
+                                        // Check Factorio version compatibility
                                         $requiredFactorioVersion = $release['info_json']['factorio_version'] ?? null;
                                         if ($requiredFactorioVersion && $this->factorioVersion) {
                                             if (!$this->isVersionCompatible($requiredFactorioVersion, $this->factorioVersion)) {
-                                                $warningMessage = "⚠️ This mod requires Factorio {$requiredFactorioVersion}, but your server is running {$this->factorioVersion}. Factorio will likely disable this mod on startup.";
+                                                $issues[] = "❌ Version incompatible: requires Factorio {$requiredFactorioVersion}, server runs {$this->factorioVersion}";
                                             }
                                         }
+                                        
+                                        // Check for missing dependencies
+                                        $dependencies = $release['info_json']['dependencies'] ?? [];
+                                        $installedMods = $modListService->getMods($server);
+                                        $installedModNames = array_column($installedMods, 'name');
+                                        
+                                        $missingDeps = [];
+                                        $disabledDeps = [];
+                                        
+                                        foreach ($dependencies as $depString) {
+                                            if (!is_string($depString)) continue;
+                                            
+                                            $depString = trim($depString);
+                                            $isOptional = str_starts_with($depString, '?') || str_starts_with($depString, '~');
+                                            $isIncompatible = str_starts_with($depString, '!');
+                                            
+                                            // Skip optional, incompatible, and base mod
+                                            if ($isOptional || $isIncompatible) continue;
+                                            
+                                            $depString = ltrim($depString, '?!~ ');
+                                            if (preg_match('/^([^\s>=<]+)/', $depString, $matches)) {
+                                                $depName = $matches[1];
+                                                if ($depName === 'base') continue;
+                                                
+                                                // Check if dependency is installed
+                                                if (!in_array($depName, $installedModNames)) {
+                                                    $missingDeps[] = $depName;
+                                                } else {
+                                                    // Check if dependency is enabled
+                                                    foreach ($installedMods as $mod) {
+                                                        if ($mod['name'] === $depName && !($mod['enabled'] ?? false)) {
+                                                            $disabledDeps[] = $depName;
+                                                            break;
+                                                        }
+                                                    }
+                                                }
+                                            }
+                                        }
+                                        
+                                        if (!empty($missingDeps)) {
+                                            $issues[] = "❌ Missing dependencies: " . implode(', ', $missingDeps);
+                                        }
+                                        
+                                        if (!empty($disabledDeps)) {
+                                            $issues[] = "⚠️ Disabled dependencies: " . implode(', ', $disabledDeps);
+                                        }
+                                        
                                         break;
                                     }
                                 }
@@ -1019,13 +1067,16 @@ class FactorioModInstaller extends Page implements Forms\Contracts\HasForms
                 }
                 
                 $notif = Notification::make()
-                    ->title("Mod {$statusText}")
-                    ->success();
+                    ->title("Mod {$statusText}");
                 
-                if ($warningMessage) {
-                    $notif->body($warningMessage)->warning();
+                if (!empty($issues)) {
+                    $notif->body(implode("\n", $issues))
+                        ->warning()
+                        ->persistent();
                 } else if ($newState) {
-                    $notif->body("Note: If this mod has missing dependencies or version incompatibilities, Factorio may automatically disable it on server start.");
+                    $notif->success();
+                } else {
+                    $notif->success();
                 }
                 
                 $notif->send();

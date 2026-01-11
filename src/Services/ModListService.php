@@ -413,6 +413,7 @@ class ModListService
                 if ($mod['name'] === $modName) {
                     $mod['enabled'] = $enabled;
                     $modExists = true;
+                    Log::info("Updated existing mod '{$modName}' in mod-list.json with enabled={$enabled}");
                     break;
                 }
             }
@@ -423,9 +424,18 @@ class ModListService
                     'name' => $modName,
                     'enabled' => $enabled,
                 ];
+                Log::info("Added new mod '{$modName}' to mod-list.json with enabled={$enabled}");
             }
             
-            return $this->writeModList($server, $modList);
+            $writeSuccess = $this->writeModList($server, $modList);
+            
+            if ($writeSuccess) {
+                Log::info("Successfully wrote mod-list.json for '{$modName}' with enabled={$enabled}");
+            } else {
+                Log::error("Failed to write mod-list.json for '{$modName}'");
+            }
+            
+            return $writeSuccess;
         } catch (\Exception $e) {
             Log::error("Error adding mod {$modName}: " . $e->getMessage());
             return false;
@@ -572,7 +582,7 @@ class ModListService
         // Get physically installed mod files
         $modFiles = $this->getModFiles($server);
         
-        // Create a map of mods from mod-list.json
+        // Create a map of mods from mod-list.json - preserve existing entries exactly as they are
         $modMap = [];
         foreach ($modsFromList as $mod) {
             $modMap[$mod['name']] = $mod;
@@ -581,7 +591,7 @@ class ModListService
         // Track if we need to update mod-list.json
         $needsUpdate = false;
         
-        // Parse mod files and add missing mods
+        // Parse mod files and add ONLY missing mods (never overwrite existing entries)
         foreach ($modFiles as $file) {
             // Extract mod name from filename: modname_version.zip
             if (preg_match('/^(.+?)_\d+\.\d+\.\d+(?:\.\d+)?\.zip$/', $file, $matches)) {
@@ -593,15 +603,17 @@ class ModListService
                     continue;
                 }
                 
-                // If mod not in mod-list.json, add it with default state (disabled)
+                // CRITICAL: Only add if mod is truly missing from mod-list.json
+                // This prevents overwriting newly installed mods that may not be physically visible yet
                 if (!isset($modMap[$modName])) {
                     $modMap[$modName] = [
                         'name' => $modName,
-                        'enabled' => false, // Default to disabled for safety
+                        'enabled' => false, // Default to disabled for safety when auto-discovering
                     ];
                     $needsUpdate = true;
                     Log::info("Found installed mod '{$modName}' not in mod-list.json, adding with enabled=false");
                 }
+                // If mod exists in modMap, keep it as-is (do NOT overwrite)
             }
         }
         

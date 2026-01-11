@@ -5,6 +5,27 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+## [1.2.3] - 2026-01-11
+
+### Fixed
+- **Mod Installation State**: Fixed issue where newly installed mods were incorrectly set to `enabled=false`
+  - Enhanced `getMods()` to preserve existing mod-list.json entries and never overwrite them
+  - Added protection against race conditions between mod installation and mod list synchronization
+  - Newly installed mods now correctly maintain their `enabled=true` state as intended
+  - Improved logging in `addMod()` to track enabled state throughout the installation process
+  - Only physically discovered mods that are truly missing from mod-list.json are added with `enabled=false`
+
+### Improved
+- **Mod Toggle Notifications**: Toggle notifications now show specific compatibility issues
+  - Displays exact missing dependencies by name (e.g., "Missing dependencies: space-age, elevated-rails")
+  - Shows disabled required dependencies that need to be enabled
+  - Reports specific Factorio version mismatches with actual versions
+  - Only shows warnings when actual issues are detected (no more generic warnings)
+  - Warnings are now persistent so users can read them carefully
+  - Removed generic "may have issues" message that appeared on every toggle
+
 ## [1.2.2] - 2026-01-10
 
 ### Fixed
