@@ -1,0 +1,22 @@
+# Release Notes
+RELEASE_NOTES.md
+
+# IDE
+.idea/
+.vscode/
+*.sublime-project
+*.sublime-workspace
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Dependencies
+/vendor/
+composer.lock
+
+# Temporary files
+*.tmp
+*.bak
+*.swp
+*~
