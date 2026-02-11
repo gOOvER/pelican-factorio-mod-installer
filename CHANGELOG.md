@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.2.5] - 2026-02-11
+
+### Fixed
+- **Pelican Panel PR #2134 Compatibility**: Added icons to all action buttons
+  - All buttons without icons are now hidden by default in Pelican Panel's new action button rendering system
+  - Added icons to category filter buttons in Browse tab (gameplay, content, tweaks, utilities, etc.)
+  - Added icons to all modal action buttons (Add, Cancel, Install, Close)
+  - Added icons to external link buttons (Homepage, GitHub/Source)
+  - Ensures all buttons remain visible and properly labeled in Pelican Panel beta 32+
+
 ## [1.2.4] - 2026-01-11
 
 ### Added

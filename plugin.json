@@ -1,7 +1,7 @@
 {
   "id": "factorio-mod-installer",
   "name": "Factorio Mod Installer",
-  "version": "1.2.4",
+  "version": "1.2.5",
   "author": "gOOvER",
   "description": "A Pelican Panel plugin for managing Factorio mods directly from the server panel.",
   "category": "plugin",

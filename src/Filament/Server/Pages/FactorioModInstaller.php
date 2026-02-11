@@ -146,16 +146,14 @@ class FactorioModInstaller extends Page implements Forms\Contracts\HasForms
                             ->visible(fn () => $this->showModDetails && $this->modDetailsPreview),
 
                         Actions::make([
-                            Action::make('findVersions')
+                            Action::make('exclude_findVersions')
                                 ->label('Find Versions')
-                                ->icon('heroicon-o-magnifying-glass')
                                 ->color('gray')
                                 ->disabled(fn () => $this->modNameValid === false || empty($this->directInstallModName))
                                 ->action(fn () => $this->loadAvailableVersions()),
 
-                            Action::make('installMod')
+                            Action::make('exclude_installMod')
                                 ->label(fn () => 'Install Mod' . ($this->selectedVersion ? " (v{$this->selectedVersion})" : ''))
-                                ->icon('heroicon-o-arrow-down-tray')
                                 ->color('success')
                                 ->size('lg')
                                 ->disabled(fn () => $this->modNameValid === false || empty($this->directInstallModName))

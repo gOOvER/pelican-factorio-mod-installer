@@ -306,14 +306,28 @@
                     size="xs"
                     wire:click="setCategory(null)"
                     :color="$selectedCategory === null ? 'primary' : 'gray'"
+                    icon="heroicon-o-square-3-stack-3d"
                 >
                     {{ trans('factorio-mod-installer::factorio-mod-installer.categories.all') }}
                 </x-filament::button>
+                @php
+                    $categoryIcons = [
+                        'gameplay' => 'heroicon-o-play',
+                        'content' => 'heroicon-o-cube',
+                        'tweaks' => 'heroicon-o-wrench',
+                        'utilities' => 'heroicon-o-wrench',
+                        'scenarios' => 'heroicon-o-square-2-stack',
+                        'mod-packs' => 'heroicon-o-archive-box',
+                        'localizations' => 'heroicon-o-language',
+                        'internal' => 'heroicon-o-cog',
+                    ];
+                @endphp
                 @foreach(['gameplay', 'content', 'tweaks', 'utilities', 'scenarios', 'mod-packs', 'localizations', 'internal'] as $category)
                     <x-filament::button
                         size="xs"
                         wire:click="setCategory('{{ $category }}')"
                         :color="$selectedCategory === $category ? 'primary' : 'gray'"
+                        :icon="$categoryIcons[$category] ?? 'heroicon-o-tag'"
                     >
                         {{ trans('factorio-mod-installer::factorio-mod-installer.categories.' . $category) }}
                     </x-filament::button>
@@ -552,6 +566,7 @@
             <x-filament::button
                 wire:click="addMod"
                 :disabled="empty($newModName)"
+                icon="heroicon-o-plus"
             >
                 {{ trans('factorio-mod-installer::factorio-mod-installer.modal.add') }}
             </x-filament::button>
@@ -559,6 +574,7 @@
             <x-filament::button
                 color="gray"
                 wire:click="closeAddModal"
+                icon="heroicon-o-x-mark"
             >
                 {{ trans('factorio-mod-installer::factorio-mod-installer.modal.cancel') }}
             </x-filament::button>
@@ -660,6 +676,7 @@
                             target="_blank"
                             size="xs"
                             color="gray"
+                            icon="heroicon-o-globe-alt"
                         >
                             Homepage
                         </x-filament::button>
@@ -679,6 +696,7 @@
                             target="_blank"
                             size="xs"
                             color="gray"
+                            icon="heroicon-o-code-bracket"
                         >
                             GitHub
                         </x-filament::button>
@@ -691,6 +709,7 @@
                     wire:click="installModFromDetails"
                     size="sm"
                     :disabled="in_array($selectedModDetails['name'], array_column($installedMods, 'name'))"
+                    :icon="in_array($selectedModDetails['name'], array_column($installedMods, 'name')) ? 'heroicon-o-check-circle' : 'heroicon-o-arrow-down-tray'"
                 >
                     {{ in_array($selectedModDetails['name'], array_column($installedMods, 'name')) 
                         ? trans('factorio-mod-installer::factorio-mod-installer.browse.installed')
@@ -701,6 +720,7 @@
                     size="sm"
                     color="gray"
                     wire:click="closeModDetails"
+                    icon="heroicon-o-x-mark"
                 >
                     {{ trans('factorio-mod-installer::factorio-mod-installer.modal.close') }}
                 </x-filament::button>
