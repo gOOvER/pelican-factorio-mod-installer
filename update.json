@@ -1,41 +1,5 @@
 {
   "*": {
-    "version": "1.0.0",
-    "download_url": "https://github.com/gOOvER/pelican-factorio-mod-installer/releases/download/v1.0.0/factorio-mod-installer-1.0.0.zip"
-  },
-  "*": {
-    "version": "1.1.0",
-    "download_url": "https://github.com/gOOvER/pelican-factorio-mod-installer/releases/download/v1.1.0/factorio-mod-installer-1.1.0.zip"
-  },
-  "*": {
-    "version": "1.1.1",
-    "download_url": "https://github.com/gOOvER/pelican-factorio-mod-installer/releases/download/v1.1.1/factorio-mod-installer-1.1.1.zip"
-  },
-  "*": {
-    "version": "1.1.2",
-    "download_url": "https://github.com/gOOvER/pelican-factorio-mod-installer/releases/download/v1.1.2/factorio-mod-installer-1.1.2.zip"
-  },
-  "*": {
-    "version": "1.2.0",
-    "download_url": "https://github.com/gOOvER/pelican-factorio-mod-installer/releases/download/v1.2.0/factorio-mod-installer-1.2.0.zip"
-  },
-  "*": {
-    "version": "1.2.1",
-    "download_url": "https://github.com/gOOvER/pelican-factorio-mod-installer/releases/download/v1.2.1/factorio-mod-installer-1.2.1.zip"
-  },
-  "*": {
-    "version": "1.2.2",
-    "download_url": "https://github.com/gOOvER/pelican-factorio-mod-installer/releases/download/v1.2.2/factorio-mod-installer-1.2.2.zip"
-  },
-  "*": {
-    "version": "1.2.3",
-    "download_url": "https://github.com/gOOvER/pelican-factorio-mod-installer/releases/download/v1.2.3/factorio-mod-installer-1.2.3.zip"
-  },
-  "*": {
-    "version": "1.2.4",
-    "download_url": "https://github.com/gOOvER/pelican-factorio-mod-installer/releases/download/v1.2.4/factorio-mod-installer-1.2.4.zip"
-  },
-  "*": {
     "version": "1.2.5",
     "download_url": "https://github.com/gOOvER/pelican-factorio-mod-installer/releases/download/v1.2.5/factorio-mod-installer-1.2.5.zip"
   }
