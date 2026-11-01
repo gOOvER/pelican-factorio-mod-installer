@@ -106,10 +106,11 @@
                             </x-filament::tabs.item>
                         </x-filament::tabs>
 
-                        {{-- SortDropdown (Name, Status, UpdatedAt) --}}
+                        {{-- SortDropdown (Name, Version, Status, Updates) --}}
                         <x-filament::input.wrapper>
                             <x-filament::input.select wire:model.live="installedModsSort">
                                 <option value="name">{{ trans('factorio-mod-installer::factorio-mod-installer.installed.sort_name') }}</option>
+                                <option value="version">{{ trans('factorio-mod-installer::factorio-mod-installer.installed.sort_version') }}</option>
                                 <option value="status">{{ trans('factorio-mod-installer::factorio-mod-installer.installed.sort_status') }}</option>
                                 <option value="updates">{{ trans('factorio-mod-installer::factorio-mod-installer.installed.filter_updates') }}</option>
                             </x-filament::input.select>
@@ -164,12 +165,13 @@
                                 <div class="flex items-center justify-between w-full">
                                     <div class="flex items-center gap-3">
                                         {{-- Thumbnail (nur wenn vorhanden) --}}
-                                        @if (!empty($mod['thumbnail']) && is_string($mod['thumbnail']))
+                                        @if (!empty($mod['thumbnail']) && is_string($mod['thumbnail']) && $mod['thumbnail'] !== '/assets/.thumb.png')
                                             <img 
-                                                src="{{ str_starts_with($mod['thumbnail'], 'http') ? $mod['thumbnail'] : 'https://mods.factorio.com' . $mod['thumbnail'] }}" 
+                                                src="{{ str_starts_with($mod['thumbnail'], 'http') ? $mod['thumbnail'] : 'https://assets-mod.factorio.com/' . ltrim($mod['thumbnail'], '/') }}" 
                                                 alt="{{ $mod['title'] ?? $mod['name'] }}"
                                                 class="w-8 h-8 rounded object-cover flex-shrink-0"
                                                 loading="lazy"
+                                                onerror="this.style.display='none'"
                                             />
                                         @endif
                                         <span>{{ $mod['title'] ?? $mod['name'] }}</span>
@@ -221,8 +223,9 @@
                                         v{{ $mod['update_available'] }}
                                     </x-filament::badge>
                                     <a 
-                                        href="https://mods.factorio.com/mod/{{ $mod['name'] }}/changelog" 
+                                        href="https://mods.factorio.com/mod/{{ rawurlencode($mod['name']) }}/changelog" 
                                         target="_blank"
+                                        rel="noopener noreferrer"
                                         class="text-xs text-primary-400 hover:text-primary-300 hover:underline flex items-center gap-1"
                                     >
                                         <x-heroicon-o-document-text class="w-3.5 h-3.5" />
@@ -249,8 +252,9 @@
                                     {{-- Portal Link --}}
                                     <x-filament::button
                                         tag="a"
-                                        href="https://mods.factorio.com/mod/{{ $mod['name'] }}"
+                                        href="https://mods.factorio.com/mod/{{ rawurlencode($mod['name']) }}"
                                         target="_blank"
+                                        rel="noopener noreferrer"
                                         color="warning"
                                         size="sm"
                                         icon="heroicon-o-globe-alt"
@@ -300,7 +304,7 @@
                 </x-filament::button>
             </div>
 
-            {{-- Category Filters --}}
+            {{-- Category Filters (Official Factorio 2.0/2.1 Mod Portal Categories) --}}
             <div class="flex gap-2 flex-wrap">
                 <x-filament::button
                     size="xs"
@@ -312,17 +316,17 @@
                 </x-filament::button>
                 @php
                     $categoryIcons = [
-                        'gameplay' => 'heroicon-o-play',
                         'content' => 'heroicon-o-cube',
+                        'overhaul' => 'heroicon-o-sparkles',
                         'tweaks' => 'heroicon-o-wrench',
-                        'utilities' => 'heroicon-o-wrench',
+                        'utilities' => 'heroicon-o-wrench-screwdriver',
                         'scenarios' => 'heroicon-o-square-2-stack',
                         'mod-packs' => 'heroicon-o-archive-box',
                         'localizations' => 'heroicon-o-language',
                         'internal' => 'heroicon-o-cog',
                     ];
                 @endphp
-                @foreach(['gameplay', 'content', 'tweaks', 'utilities', 'scenarios', 'mod-packs', 'localizations', 'internal'] as $category)
+                @foreach(['content', 'overhaul', 'tweaks', 'utilities', 'scenarios', 'mod-packs', 'localizations', 'internal'] as $category)
                     <x-filament::button
                         size="xs"
                         wire:click="setCategory('{{ $category }}')"
@@ -351,9 +355,9 @@
                             <x-slot name="heading">
                                 <div class="flex items-center gap-3">
                                     {{-- Thumbnail --}}
-                                    @if (!empty($mod['thumbnail']) && is_string($mod['thumbnail']))
+                                    @if (!empty($mod['thumbnail']) && is_string($mod['thumbnail']) && $mod['thumbnail'] !== '/assets/.thumb.png')
                                         <img 
-                                            src="{{ str_starts_with($mod['thumbnail'], 'http') ? $mod['thumbnail'] : 'https://mods.factorio.com' . $mod['thumbnail'] }}" 
+                                            src="{{ str_starts_with($mod['thumbnail'], 'http') ? $mod['thumbnail'] : 'https://assets-mod.factorio.com/' . ltrim($mod['thumbnail'], '/') }}" 
                                             alt="{{ $mod['title'] ?? $mod['name'] }}"
                                             class="w-10 h-10 rounded object-cover flex-shrink-0"
                                             loading="lazy"
@@ -471,7 +475,7 @@
                             </li>
                             <li class="flex items-start gap-2">
                                 <span class="text-info-600 dark:text-info-400">−</span>
-                                <span>Use underscores, not spaces (e.g., <code class="px-1 py-0.5 bg-gray-100 dark:bg-gray-800 rounded text-xs font-mono">my_mod</code>)</span>
+                                <span>Use underscores or dashes as in the URL (e.g., <code class="px-1 py-0.5 bg-gray-100 dark:bg-gray-800 rounded text-xs font-mono">my_mod</code>)</span>
                             </li>
                             <li class="flex items-start gap-2">
                                 <span class="text-success-600 dark:text-success-400">↓</span>
@@ -479,7 +483,7 @@
                             </li>
                             <li class="flex items-start gap-2">
                                 <span class="text-primary-600 dark:text-primary-400">🧩</span>
-                                <span>Dependencies installed automatically</span>
+                                <span>Required dependencies installed automatically</span>
                             </li>
                         </ul>
                     </div>
@@ -506,7 +510,7 @@
                             <ol class="space-y-3 text-sm">
                                 <li class="flex items-start gap-3">
                                     <span class="flex-shrink-0 flex items-center justify-center w-6 h-6 rounded-full bg-blue-100 dark:bg-blue-900/30 text-blue-700 dark:text-blue-400 text-xs font-bold">1</span>
-                                    <span class="text-gray-700 dark:text-gray-300 pt-0.5">Go to <a href="https://mods.factorio.com" target="_blank" rel="noopener" class="inline-flex items-center gap-1 text-blue-600 dark:text-blue-400 hover:text-blue-700 dark:hover:text-blue-300 font-medium hover:underline">mods.factorio.com<svg class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14"/></svg></a></span>
+                                    <span class="text-gray-700 dark:text-gray-300 pt-0.5">Go to <a href="https://mods.factorio.com" target="_blank" rel="noopener noreferrer" class="inline-flex items-center gap-1 text-blue-600 dark:text-blue-400 hover:text-blue-700 dark:hover:text-blue-300 font-medium hover:underline">mods.factorio.com<svg class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14"/></svg></a></span>
                                 </li>
                                 <li class="flex items-start gap-3">
                                     <span class="flex-shrink-0 flex items-center justify-center w-6 h-6 rounded-full bg-blue-100 dark:bg-blue-900/30 text-blue-700 dark:text-blue-400 text-xs font-bold">2</span>
@@ -591,8 +595,8 @@
             <div class="space-y-4">
                 {{-- Mod info --}}
                 <div class="flex gap-3">
-                    @if (!empty($selectedModDetails['thumbnail']) && is_string($selectedModDetails['thumbnail']))
-                        <img src="{{ str_starts_with($selectedModDetails['thumbnail'], 'http') ? $selectedModDetails['thumbnail'] : 'https://mods.factorio.com' . $selectedModDetails['thumbnail'] }}" 
+                    @if (!empty($selectedModDetails['thumbnail']) && is_string($selectedModDetails['thumbnail']) && $selectedModDetails['thumbnail'] !== '/assets/.thumb.png')
+                        <img src="{{ str_starts_with($selectedModDetails['thumbnail'], 'http') ? $selectedModDetails['thumbnail'] : 'https://assets-mod.factorio.com/' . ltrim($selectedModDetails['thumbnail'], '/') }}" 
                              alt="{{ $selectedModDetails['title'] ?? '' }}"
                              class="w-20 h-20 object-cover rounded"
                              onerror="this.style.display='none'"
@@ -610,7 +614,7 @@
                             @endif
                             @if (!empty($selectedModDetails['latest_release']['version']) && is_string($selectedModDetails['latest_release']['version']))
                                 <x-filament::badge size="xs" color="gray">
-                                    {{ $selectedModDetails['latest_release']['version'] }}
+                                    v{{ $selectedModDetails['latest_release']['version'] }}
                                 </x-filament::badge>
                             @endif
                         </div>
@@ -642,9 +646,13 @@
                                 @if (is_array($dep) && !empty($dep['name']))
                                     <div class="text-xs flex items-center gap-2 text-gray-600 dark:text-gray-400">
                                         @if (($dep['type'] ?? '') === 'required')
-                                            <span class="text-red-500">●</span>
+                                            <span class="text-red-500" title="Required">●</span>
+                                        @elseif (($dep['type'] ?? '') === 'incompatible')
+                                            <span class="text-gray-500" title="Incompatible">✕</span>
+                                        @elseif (($dep['type'] ?? '') === 'recommended')
+                                            <span class="text-green-500" title="Recommended">+</span>
                                         @else
-                                            <span class="text-yellow-500">○</span>
+                                            <span class="text-yellow-500" title="Optional">○</span>
                                         @endif
                                         <span>{{ $dep['name'] }}</span>
                                         @if (!empty($dep['version']))
@@ -669,11 +677,12 @@
 
                 {{-- Links --}}
                 <div class="flex gap-2 pt-2">
-                    @if (!empty($selectedModDetails['homepage']) && is_string($selectedModDetails['homepage']))
+                    @if (!empty($selectedModDetails['homepage']) && is_string($selectedModDetails['homepage']) && preg_match('/^https?:\/\//i', $selectedModDetails['homepage']))
                         <x-filament::button
                             tag="a"
                             href="{{ $selectedModDetails['homepage'] }}"
                             target="_blank"
+                            rel="noopener noreferrer"
                             size="xs"
                             color="gray"
                             icon="heroicon-o-globe-alt"
@@ -686,7 +695,10 @@
                         if (!empty($selectedModDetails['source_url']) && is_string($selectedModDetails['source_url'])) {
                             $sourceUrl = $selectedModDetails['source_url'];
                         } elseif (!empty($selectedModDetails['github_path']) && is_string($selectedModDetails['github_path'])) {
-                            $sourceUrl = 'https://github.com/' . $selectedModDetails['github_path'];
+                            $sourceUrl = 'https://github.com/' . ltrim($selectedModDetails['github_path'], '/');
+                        }
+                        if ($sourceUrl && !preg_match('/^https?:\/\//i', $sourceUrl)) {
+                            $sourceUrl = null;
                         }
                     @endphp
                     @if ($sourceUrl)
@@ -694,6 +706,7 @@
                             tag="a"
                             href="{{ $sourceUrl }}"
                             target="_blank"
+                            rel="noopener noreferrer"
                             size="xs"
                             color="gray"
                             icon="heroicon-o-code-bracket"

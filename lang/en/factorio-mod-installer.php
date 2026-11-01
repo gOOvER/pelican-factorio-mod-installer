@@ -43,12 +43,10 @@ return [
         'version' => 'Version',
         'by' => 'by',
     ],
-
     'cache' => [
         'info' => ':count mods cached, last update :time',
         'unknown' => 'unknown',
     ],
-
     'direct_install' => [
         'title' => 'Direct Install by Mod Name',
         'placeholder' => 'Enter mod name (e.g., rso-mod)',
@@ -59,6 +57,7 @@ return [
     'categories' => [
         'all' => 'All',
         'gameplay' => 'Gameplay',
+        'overhaul' => 'Overhaul',
         'content' => 'Content',
         'tweaks' => 'Tweaks',
         'utilities' => 'Utilities',
@@ -115,7 +114,7 @@ return [
         'mod_not_found' => 'Mod not found on the portal',
         'no_compatible_version' => 'No compatible version found for your Factorio version',
         'experimental_warning' => 'Factorio Experimental detected',
-        'experimental_warning_body' => 'Mods will be installed with reduced compatibility check. Only checking if the mod is 2.0+ compatible.',
+        'experimental_warning_body' => 'Installing mods compatible with the active experimental Factorio major version.',
     ],
     'confirm_delete' => 'Are you sure you want to remove ":name"? This action cannot be undone.',
     'delete' => 'Delete',

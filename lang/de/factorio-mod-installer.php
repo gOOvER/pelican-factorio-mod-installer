@@ -47,16 +47,17 @@ return [
         'info' => ':count Mods gecacht, letztes Update :time',
         'unknown' => 'unbekannt',
     ],
-
     'direct_install' => [
         'title' => 'Direkte Installation per Mod-Name',
         'placeholder' => 'Mod-Name eingeben (z.B. rso-mod)',
         'button' => 'Installieren',
         'hint' => 'Geben Sie den exakten Mod-Namen ein, um die neueste kompatible Version herunterzuladen.',
         'latest_version_hint' => 'Neueste kompatible Version wird automatisch installiert',
-    ],    'categories' => [
+    ],
+    'categories' => [
         'all' => 'Alle',
         'gameplay' => 'Gameplay',
+        'overhaul' => 'Overhaul',
         'content' => 'Inhalt',
         'tweaks' => 'Anpassungen',
         'utilities' => 'Werkzeuge',
@@ -113,7 +114,7 @@ return [
         'mod_not_found' => 'Mod wurde im Portal nicht gefunden',
         'no_compatible_version' => 'Keine kompatible Version für Ihre Factorio-Version gefunden',
         'experimental_warning' => 'Factorio Experimental erkannt',
-        'experimental_warning_body' => 'Mods werden mit reduzierter Kompatibilitätsprüfung installiert. Es wird nur geprüft, ob das Mod 2.0+ kompatibel ist.',
+        'experimental_warning_body' => 'Es werden Mods installiert, die mit der aktuellen Experimental-Major-Version kompatibel sind.',
     ],
     'confirm_delete' => 'Möchtest du ":name" wirklich entfernen? Diese Aktion kann nicht rückgängig gemacht werden.',
     'delete' => 'Löschen',

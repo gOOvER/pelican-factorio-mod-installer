@@ -1,12 +1,15 @@
 {
   "id": "factorio-mod-installer",
   "name": "Factorio Mod Installer",
-  "version": "1.2.5",
+  "version": "1.3.0",
   "author": "gOOvER",
   "description": "A Pelican Panel plugin for managing Factorio mods directly from the server panel.",
   "category": "plugin",
   "namespace": "gOOvER\\FactorioModInstaller",
   "class": "FactorioModInstallerPlugin",
   "panels": ["server"],
+  "panel_version": null,
+  "api_version": 1,
+  "composer_packages": null,
   "update_url": "https://raw.githubusercontent.com/gOOvER/pelican-factorio-mod-installer/main/update.json"
 }

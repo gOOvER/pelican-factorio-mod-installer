@@ -4,12 +4,14 @@ namespace gOOvER\FactorioModInstaller\Services;
 
 use App\Models\Server;
 use App\Repositories\Daemon\DaemonFileRepository;
+use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\Log;
 
 class ModListService
 {
     private const MOD_LIST_FILE = 'mod-list.json';
     private const MODS_DIR = 'mods';
+    private const DOWNLOAD_TIMEOUT = 120;
 
     public function __construct(
         private DaemonFileRepository $fileRepository,
@@ -22,7 +24,7 @@ class ModListService
      */
     private function getModsPath(): string
     {
-        return 'mods';
+        return trim((string) config('factorio-mod-installer.mods_directory', self::MODS_DIR), '/') ?: self::MODS_DIR;
     }
 
     /**
@@ -30,7 +32,30 @@ class ModListService
      */
     private function getModListPath(): string
     {
-        return 'mods/mod-list.json';
+        $file = ltrim((string) config('factorio-mod-installer.mod_list_file', self::MOD_LIST_FILE), '/') ?: self::MOD_LIST_FILE;
+        return $this->getModsPath() . '/' . $file;
+    }
+
+    /**
+     * Validate a filename to prevent path traversal attacks
+     *
+     * @throws \InvalidArgumentException
+     */
+    public function validateFilename(string $filename): string
+    {
+        if (
+            $filename === ''
+            || $filename === '.'
+            || str_contains($filename, "\0")
+            || str_contains($filename, '..')
+            || str_contains($filename, '/')
+            || str_contains($filename, '\\')
+            || !str_ends_with(strtolower($filename), '.zip')
+        ) {
+            throw new \InvalidArgumentException('Invalid mod filename detected.');
+        }
+
+        return basename($filename);
     }
 
     /**
@@ -42,64 +67,58 @@ class ModListService
 
         try {
             $this->fileRepository->setServer($server);
-            
-            // Try to read the file
+
             $content = $this->fileRepository->getContent($path);
             $data = json_decode($content, true);
-            
-            if ($data && isset($data['mods'])) {
+
+            if (is_array($data) && isset($data['mods']) && is_array($data['mods'])) {
                 return $data;
             }
-            
-            // File is empty or invalid, return default
-            return [
-                'mods' => [
-                    [
-                        'name' => 'base',
-                        'enabled' => true,
-                    ],
-                ],
-            ];
+
+            return $this->defaultModList();
         } catch (\Exception $e) {
-            // File doesn't exist or can't be read, return default
             Log::debug('mod-list.json not found or unreadable, returning default: ' . $e->getMessage());
-            return [
-                'mods' => [
-                    [
-                        'name' => 'base',
-                        'enabled' => true,
-                    ],
-                ],
-            ];
+            return $this->defaultModList();
         }
+    }
+
+    private function defaultModList(): array
+    {
+        return [
+            'mods' => [
+                [
+                    'name' => 'base',
+                    'enabled' => true,
+                ],
+            ],
+        ];
     }
 
     /**
      * Get list of mod files in the mods directory
-     *
-     * @param Server $server
-     * @return array
      */
     public function getModFiles(Server $server): array
     {
         try {
             $this->fileRepository->setServer($server);
-            $files = $this->fileRepository->getDirectory('mods');
-            
-            // The getDirectory returns an array of file objects with 'name' property
+            $files = $this->fileRepository->getDirectory($this->getModsPath());
+
+            if (!is_array($files) || isset($files['error'])) {
+                return [];
+            }
+
             $zipFiles = [];
             foreach ($files as $file) {
-                if (is_array($file) && isset($file['name']) && str_ends_with($file['name'], '.zip')) {
+                if (is_array($file) && isset($file['name']) && is_string($file['name']) && str_ends_with($file['name'], '.zip')) {
                     $zipFiles[] = $file['name'];
                 } elseif (is_string($file) && str_ends_with($file, '.zip')) {
                     $zipFiles[] = $file;
                 }
             }
-            
-            Log::info("Found mod files: " . implode(', ', $zipFiles));
+
             return $zipFiles;
         } catch (\Exception $e) {
-            Log::warning("Could not list mod files: " . $e->getMessage());
+            Log::debug('Could not list mod files: ' . $e->getMessage());
             return [];
         }
     }
@@ -110,46 +129,42 @@ class ModListService
     public function writeModList(Server $server, array $data): bool
     {
         $path = $this->getModListPath();
+        $modsDir = $this->getModsPath();
 
         try {
             $this->fileRepository->setServer($server);
-            
-            // Ensure mods directory exists
+
             try {
-                $this->fileRepository->createDirectory('mods', '/');
+                $this->fileRepository->createDirectory($modsDir, '/');
             } catch (\Exception $e) {
-                // Directory might already exist, that's okay
                 Log::debug('mods directory might already exist: ' . $e->getMessage());
             }
-            
-            // Write the file
-            $content = json_encode($data, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES);
-            Log::info("Writing mod-list.json with " . count($data['mods'] ?? []) . " mods. Content: " . substr($content, 0, 500));
-            
-            $this->fileRepository->putContent($path, $content);
-            
-            Log::info("Successfully wrote mod-list.json to {$path}");
+
+            $content = json_encode($data, JSON_THROW_ON_ERROR | JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES);
+            $response = $this->fileRepository->putContent($path, $content);
+
+            if (is_object($response) && method_exists($response, 'failed') && $response->failed()) {
+                Log::error('Wings returned failure status when writing mod-list.json');
+                return false;
+            }
+
             return true;
         } catch (\Exception $e) {
             Log::error('Failed to write mod-list.json via Wings: ' . $e->getMessage());
-            Log::error('Stack trace: ' . $e->getTraceAsString());
             return false;
         }
     }
 
     /**
      * Remove a mod file from the mods directory
-     *
-     * @param Server $server
-     * @param string $fileName
-     * @return bool
      */
     public function removeModFile(Server $server, string $fileName): bool
     {
         try {
+            $safeFileName = $this->validateFilename($fileName);
             $this->fileRepository->setServer($server);
-            $this->fileRepository->deleteFiles('mods', [$fileName]);
-            Log::info("Deleted mod file: {$fileName}");
+            $this->fileRepository->deleteFiles($this->getModsPath(), [$safeFileName]);
+            Log::info("Deleted mod file: {$safeFileName}");
             return true;
         } catch (\Exception $e) {
             Log::error("Failed to delete mod file {$fileName}: " . $e->getMessage());
@@ -158,46 +173,40 @@ class ModListService
     }
 
     /**
-     * Get mod info.json from a mod ZIP file
-     *
-     * @param Server $server
-     * @param string $modName
-     * @return array|null Returns mod info or null if not found
+     * Extract installed version for a mod from a list of mod ZIP filenames
      */
-    public function getModInfo(Server $server, string $modName): ?array
+    public function extractInstalledVersionFromFiles(string $modName, array $modFiles): ?string
     {
-        try {
-            $modFiles = $this->getModFiles($server);
-            $modPrefix = $modName . '_';
-            
-            // Find the mod file
-            $modFile = null;
-            foreach ($modFiles as $file) {
-                if (str_starts_with($file, $modPrefix)) {
-                    $modFile = $file;
-                    break;
+        $modPrefix = $modName . '_';
+        foreach ($modFiles as $file) {
+            if (str_starts_with($file, $modPrefix)) {
+                if (preg_match('/^' . preg_quote($modName, '/') . '_(\d+\.\d+\.\d+(?:\.\d+)?)\.zip$/', $file, $matches)) {
+                    return $matches[1];
                 }
             }
-            
-            if (!$modFile) {
-                Log::warning("No mod file found for {$modName}");
-                return null;
-            }
-            
-            // Try to read info.json from the ZIP
-            // Note: We can't easily read ZIP contents via Wings API, so we'll try to fetch from portal
-            // This is a limitation - in a real implementation, we'd download and inspect the ZIP
-            
-            // Fallback: Get version from filename
-            if (preg_match('/' . preg_quote($modName, '/') . '_(\d+\.\d+\.\d+(?:\.\d+)?)\.zip$/', $modFile, $matches)) {
+        }
+
+        return null;
+    }
+
+    /**
+     * Get mod info from a mod ZIP filename
+     */
+    public function getModInfo(Server $server, string $modName, ?array $modFiles = null): ?array
+    {
+        try {
+            $modFiles ??= $this->getModFiles($server);
+            $version = $this->extractInstalledVersionFromFiles($modName, $modFiles);
+
+            if ($version !== null) {
                 return [
                     'name' => $modName,
-                    'version' => $matches[1],
+                    'version' => $version,
                     'title' => $modName,
-                    'factorio_version' => null, // Unknown without reading ZIP
+                    'factorio_version' => null,
                 ];
             }
-            
+
             return null;
         } catch (\Exception $e) {
             Log::error("Error getting mod info for {$modName}: " . $e->getMessage());
@@ -206,236 +215,323 @@ class ModListService
     }
 
     /**
-     * Install mod with dependencies recursively
+     * Install mod with dependencies recursively according to the Factorio 2.0/2.1 dependency specification
      */
-    public function installModWithDependencies(Server $server, string $modName, bool $enabled = true, ?string $version = null, array &$installed = []): array
-    {
+    public function installModWithDependencies(
+        Server $server,
+        string $modName,
+        bool $enabled = true,
+        ?string $version = null,
+        array &$installed = [],
+        ?string $factorioVersion = null
+    ): array {
         $results = ['installed' => [], 'skipped' => [], 'failed' => []];
-        
-        // Prevent circular dependencies
-        if (in_array($modName, $installed)) {
+
+        // Skip built-in Factorio / Space Age expansion mods
+        if (in_array($modName, FactorioModPortalService::BUILTIN_MODS, true)) {
             $results['skipped'][] = $modName;
             return $results;
         }
-        
+
+        // Prevent circular dependencies
+        if (in_array($modName, $installed, true)) {
+            $results['skipped'][] = $modName;
+            return $results;
+        }
+
+        // Mark as visited immediately to avoid infinite recursion on cyclic dependency graphs
+        $installed[] = $modName;
+
         try {
-            // Get mod details to check dependencies
             $modDetails = $this->modPortalService->getModDetails($modName, true);
-            if (!$modDetails || empty($modDetails['releases'])) {
+            if (!$modDetails || empty($modDetails['releases']) || !is_array($modDetails['releases'])) {
                 $results['failed'][] = $modName;
                 return $results;
             }
-            
-            // Get the release (specified version or latest)
+
+            $releases = $this->modPortalService->sortReleasesDesc($modDetails['releases']);
+
+            // Select the requested version, or the latest release compatible with the server's Factorio version
             $release = null;
             if ($version) {
-                foreach ($modDetails['releases'] as $r) {
-                    if ($r['version'] === $version) {
+                foreach ($releases as $r) {
+                    if (($r['version'] ?? null) === $version) {
+                        $release = $r;
+                        break;
+                    }
+                }
+            } elseif ($factorioVersion) {
+                foreach ($releases as $r) {
+                    $relFactorioVer = $r['info_json']['factorio_version'] ?? null;
+                    if ($this->modPortalService->isVersionCompatible($relFactorioVer, $factorioVersion)) {
                         $release = $r;
                         break;
                     }
                 }
             } else {
-                // Sort by date and get newest
-                $releases = $modDetails['releases'];
-                usort($releases, function($a, $b) {
-                    return strtotime($b['released_at'] ?? '1970-01-01') <=> strtotime($a['released_at'] ?? '1970-01-01');
-                });
                 $release = $releases[0] ?? null;
             }
-            
+
             if (!$release) {
                 $results['failed'][] = $modName;
                 return $results;
             }
-            
-            // Parse and install dependencies first
+
+            $selectedVersion = $release['version'] ?? $version;
+            $effectiveFactorioVersion = $factorioVersion
+                ?? ($release['info_json']['factorio_version'] ?? null);
+
+            // Read current mod list once to check already installed dependencies
+            $modList = $this->readModList($server);
+            $installedModNames = array_column($modList['mods'] ?? [], 'name');
+
+            // Parse and install required dependencies first
             $dependencies = $release['info_json']['dependencies'] ?? [];
-            foreach ($dependencies as $depString) {
-                if (!is_string($depString)) continue;
-                
-                // Parse dependency: "? mod-name >= 1.0.0" or "! mod-name"
-                $depString = trim($depString);
-                $isOptional = str_starts_with($depString, '?') || str_starts_with($depString, '~');
-                $isIncompatible = str_starts_with($depString, '!');
-                
-                // Skip optional and incompatible dependencies
-                if ($isOptional || $isIncompatible) {
-                    continue;
-                }
-                
-                // Remove prefix and extract name
-                $depString = ltrim($depString, '?!~ ');
-                if (preg_match('/^([^\s>=<]+)/', $depString, $matches)) {
-                    $depName = $matches[1];
-                    
-                    // Skip base mod
-                    if ($depName === 'base') continue;
-                    
-                    // Check if already installed
-                    $modList = $this->readModList($server);
-                    $alreadyInstalled = false;
-                    foreach ($modList['mods'] as $mod) {
-                        if ($mod['name'] === $depName) {
-                            $alreadyInstalled = true;
-                            break;
-                        }
+            if (is_array($dependencies)) {
+                foreach ($dependencies as $depString) {
+                    if (!is_string($depString)) {
+                        continue;
                     }
-                    
-                    if (!$alreadyInstalled) {
-                        Log::info("Installing dependency: {$depName} for {$modName}");
-                        $depResults = $this->installModWithDependencies($server, $depName, true, null, $installed);
-                        
-                        // Merge results
+
+                    $parsed = $this->modPortalService->parseDependencyString($depString);
+                    if (!$parsed || !$parsed['is_required']) {
+                        // Skip optional (`?`), hidden-optional (`(?)`), recommended (`+`), and incompatible (`!`)
+                        continue;
+                    }
+
+                    $depName = $parsed['name'];
+
+                    // Skip built-in Factorio and Space Age DLC mods (`base`, `elevated-rails`, `quality`, `space-age`)
+                    if (in_array($depName, FactorioModPortalService::BUILTIN_MODS, true)) {
+                        continue;
+                    }
+
+                    if (!in_array($depName, $installedModNames, true) && !in_array($depName, $installed, true)) {
+                        Log::info("Installing required dependency: {$depName} for {$modName}");
+                        $depResults = $this->installModWithDependencies(
+                            $server,
+                            $depName,
+                            true,
+                            null,
+                            $installed,
+                            $effectiveFactorioVersion
+                        );
+
                         $results['installed'] = array_merge($results['installed'], $depResults['installed']);
                         $results['skipped'] = array_merge($results['skipped'], $depResults['skipped']);
                         $results['failed'] = array_merge($results['failed'], $depResults['failed']);
                     }
                 }
             }
-            
+
             // Now install the mod itself
-            if ($this->addMod($server, $modName, $enabled, $version)) {
+            if ($this->addMod($server, $modName, $enabled, $selectedVersion, $factorioVersion)) {
                 $results['installed'][] = $modName;
-                $installed[] = $modName;
             } else {
                 $results['failed'][] = $modName;
             }
-            
         } catch (\Exception $e) {
             Log::error("Error installing {$modName} with dependencies: " . $e->getMessage());
             $results['failed'][] = $modName;
         }
-        
+
         return $results;
+    }
+
+    /**
+     * Resolve Factorio credentials from server-settings.json or server environment variables
+     *
+     * @return array{username: string|null, token: string|null}
+     */
+    private function getFactorioCredentials(Server $server): array
+    {
+        $username = null;
+        $token = null;
+
+        $candidatePaths = ['/data/server-settings.json', 'data/server-settings.json', 'server-settings.json'];
+        foreach ($candidatePaths as $settingsPath) {
+            try {
+                $settingsContent = $this->fileRepository->setServer($server)->getContent($settingsPath);
+                $settings = json_decode($settingsContent, true);
+
+                if (is_array($settings)) {
+                    $username = !empty($settings['username']) ? trim((string) $settings['username']) : null;
+                    $token = !empty($settings['token']) ? trim((string) $settings['token']) : null;
+
+                    if ($username && $token) {
+                        return ['username' => $username, 'token' => $token];
+                    }
+                }
+            } catch (\Exception) {
+                // Continue checking next candidate path
+            }
+        }
+
+        // Fallback: check server environment variables if defined on the Egg
+        try {
+            $server->loadMissing('variables');
+            foreach ($server->variables as $variable) {
+                $envName = strtoupper((string) $variable->env_variable);
+                $val = $variable->server_value ?? $variable->variable_value ?? null;
+                if (!$val) {
+                    continue;
+                }
+                if (in_array($envName, ['FACTORIO_USERNAME', 'USERNAME'], true) && !$username) {
+                    $username = trim((string) $val);
+                } elseif (in_array($envName, ['FACTORIO_TOKEN', 'TOKEN'], true) && !$token) {
+                    $token = trim((string) $val);
+                }
+            }
+        } catch (\Exception) {
+            // Ignore variable resolution errors
+        }
+
+        return ['username' => $username, 'token' => $token];
+    }
+
+    /**
+     * Download a mod file to the server's mods directory.
+     * Uses Wings' `/files/pull` with `foreground: true` & `file_name` first (zero Panel RAM usage),
+     * falling back to Guzzle streaming if needed.
+     *
+     * @throws \RuntimeException
+     */
+    private function downloadModFileToServer(Server $server, string $fullDownloadUrl, string $safeFileName): void
+    {
+        $modsDir = $this->getModsPath();
+
+        try {
+            $this->fileRepository->setServer($server)->createDirectory($modsDir, '/');
+        } catch (\Exception) {
+            // Directory likely already exists
+        }
+
+        // 1. Try Wings foreground pull first (Pelican reference pattern from minecraft-modrinth)
+        try {
+            $this->fileRepository
+                ->setServer($server)
+                ->getHttpClient()
+                ->timeout(max((int) config('panel.guzzle.timeout', 30), self::DOWNLOAD_TIMEOUT))
+                ->post("/api/servers/{$server->uuid}/files/pull", [
+                    'url' => $fullDownloadUrl,
+                    'root' => $modsDir,
+                    'file_name' => $safeFileName,
+                    'foreground' => true,
+                ]);
+
+            if (in_array($safeFileName, $this->getModFiles($server), true)) {
+                Log::info("Successfully pulled mod file {$safeFileName} directly via Wings");
+                return;
+            }
+        } catch (\Exception $pullException) {
+            Log::debug("Wings direct pull failed for {$safeFileName}, falling back to Panel download: " . $pullException->getMessage());
+        }
+
+        // 2. Fallback: Download via Guzzle into a temporary stream (avoiding in-memory string exhaustion) and upload
+        $client = new \GuzzleHttp\Client([
+            'timeout' => self::DOWNLOAD_TIMEOUT,
+            'connect_timeout' => 10,
+            'http_errors' => false,
+        ]);
+
+        $response = $client->get($fullDownloadUrl);
+        $statusCode = $response->getStatusCode();
+
+        if ($statusCode === 403 || $statusCode === 401) {
+            throw new \RuntimeException(
+                'Factorio Mod Portal rejected the download (HTTP ' . $statusCode . '). '
+                . 'Please configure a valid Factorio username and token in server-settings.json.'
+            );
+        }
+
+        if ($statusCode !== 200) {
+            throw new \RuntimeException("Failed to download mod file {$safeFileName} (HTTP status {$statusCode}).");
+        }
+
+        // Verify we did not receive an HTML login page instead of a ZIP archive
+        $contentType = strtolower($response->getHeaderLine('Content-Type'));
+        if (str_contains($contentType, 'text/html')) {
+            throw new \RuntimeException(
+                'Factorio Mod Portal redirected to login page. Please configure a valid Factorio username and token in server-settings.json.'
+            );
+        }
+
+        $modContent = $response->getBody()->getContents();
+        if (strlen($modContent) < 4 || substr($modContent, 0, 2) !== 'PK') {
+            throw new \RuntimeException("Downloaded file for {$safeFileName} is not a valid ZIP archive.");
+        }
+
+        $putResponse = $this->fileRepository->setServer($server)->putContent("{$modsDir}/{$safeFileName}", $modContent);
+        if (is_object($putResponse) && method_exists($putResponse, 'failed') && $putResponse->failed()) {
+            throw new \RuntimeException("Failed to write {$safeFileName} to server via Wings.");
+        }
+
+        Log::info("Successfully uploaded mod file {$safeFileName} to {$modsDir}/ directory");
     }
 
     /**
      * Add or update a mod in the mod list and download the mod file
      */
-    public function addMod(Server $server, string $modName, bool $enabled = true, ?string $version = null): bool
-    {
+    public function addMod(
+        Server $server,
+        string $modName,
+        bool $enabled = true,
+        ?string $version = null,
+        ?string $factorioVersion = null
+    ): bool {
         try {
-            // First, get the mod details and download the mod file
             if ($version) {
-                // Get specific version
                 $release = $this->modPortalService->getModRelease($modName, $version);
             } else {
-                // Get latest release
-                $release = $this->modPortalService->getLatestRelease($modName);
+                $release = $this->modPortalService->getLatestRelease($modName, $factorioVersion);
             }
-            
+
             if (!$release) {
-                Log::error("Could not find release info for mod: {$modName}" . ($version ? " version {$version}" : ""));
+                Log::error("Could not find compatible release info for mod: {$modName}" . ($version ? " version {$version}" : ''));
                 return false;
             }
-            
+
             $downloadUrl = $release['download_url'] ?? null;
             $fileName = $release['file_name'] ?? null;
-            
+
             if (!$downloadUrl || !$fileName) {
                 Log::error("Missing download URL or filename for mod: {$modName}");
                 return false;
             }
-            
-            // Get Factorio credentials from server-settings.json
-            $username = null;
-            $token = null;
-            
-            try {
-                $settingsContent = $this->fileRepository->setServer($server)->getContent('/data/server-settings.json');
-                $settings = json_decode($settingsContent, true);
-                
-                if ($settings) {
-                    $username = $settings['username'] ?? null;
-                    $token = $settings['token'] ?? null;
-                    
-                    if ($username && $token) {
-                        Log::info("Found credentials in server-settings.json: username={$username}");
-                    } else {
-                        Log::warning("server-settings.json found but username or token is empty");
+
+            $safeFileName = $this->validateFilename($fileName);
+            $credentials = $this->getFactorioCredentials($server);
+            $username = $credentials['username'];
+            $token = $credentials['token'];
+
+            $fullDownloadUrl = $this->modPortalService->getDownloadUrl($downloadUrl, $username, $token);
+
+            // Download the mod file to the server (throws RuntimeException on auth/network failure)
+            $this->downloadModFileToServer($server, $fullDownloadUrl, $safeFileName);
+
+            // Update mod-list.json atomically using Cache::lock
+            return Cache::lock("factorio_modlist:{$server->id}", 10)->block(5, function () use ($server, $modName, $enabled) {
+                $modList = $this->readModList($server);
+
+                $modExists = false;
+                foreach ($modList['mods'] as &$mod) {
+                    if (($mod['name'] ?? null) === $modName) {
+                        $mod['enabled'] = $enabled;
+                        $modExists = true;
+                        break;
                     }
-                } else {
-                    Log::warning("Could not parse server-settings.json");
                 }
-            } catch (\Exception $e) {
-                Log::warning("Could not read server-settings.json: " . $e->getMessage());
-            }
-            
-            // Build full download URL with authentication if available
-            $fullDownloadUrl = 'https://mods.factorio.com' . $downloadUrl;
-            if ($username && $token) {
-                $fullDownloadUrl .= '?username=' . urlencode($username) . '&token=' . urlencode($token);
-                Log::info("Downloading mod {$modName} ({$fileName}) with authentication");
-            } else {
-                Log::warning("Downloading mod {$modName} ({$fileName}) without authentication - credentials not found in server-settings.json");
-            }
-            
-            // Download the mod file with Guzzle (because Wings pull() can't follow Factorio redirects)
-            try {
-                Log::info("Downloading from: {$fullDownloadUrl}");
-                
-                // Use Guzzle to download the file
-                $client = new \GuzzleHttp\Client(['timeout' => 120]);
-                $response = $client->get($fullDownloadUrl);
-                
-                if ($response->getStatusCode() !== 200) {
-                    throw new \Exception("Failed to download mod, HTTP status: " . $response->getStatusCode());
+                unset($mod);
+
+                if (!$modExists) {
+                    $modList['mods'][] = [
+                        'name' => $modName,
+                        'enabled' => $enabled,
+                    ];
                 }
-                
-                $modContent = $response->getBody()->getContents();
-                Log::info("Downloaded " . strlen($modContent) . " bytes");
-                
-                // Upload to server using Wings putContent
-                $this->fileRepository->setServer($server)->putContent("mods/{$fileName}", $modContent);
-                Log::info("Successfully uploaded mod file {$fileName} to mods/ directory");
-                
-            } catch (\GuzzleHttp\Exception\ClientException $e) {
-                // 403 Forbidden - authentication required
-                if ($e->getResponse()->getStatusCode() === 403) {
-                    Log::warning("Mod download requires authentication. Adding to mod-list.json only - Factorio will download on next start.");
-                    // Continue to add mod to mod-list.json
-                } else {
-                    throw $e;
-                }
-            } catch (\Exception $e) {
-                Log::error("Failed to download/upload mod {$modName}: " . $e->getMessage());
-                Log::warning("Adding mod to mod-list.json anyway - Factorio will attempt download on next start");
-                // Continue to add mod to mod-list.json even if download fails
-            }
-            
-            // Now add/update the mod in mod-list.json
-            $modList = $this->readModList($server);
-            
-            // Check if mod already exists
-            $modExists = false;
-            foreach ($modList['mods'] as &$mod) {
-                if ($mod['name'] === $modName) {
-                    $mod['enabled'] = $enabled;
-                    $modExists = true;
-                    Log::info("Updated existing mod '{$modName}' in mod-list.json with enabled={$enabled}");
-                    break;
-                }
-            }
-            
-            // Add new mod if it doesn't exist
-            if (!$modExists) {
-                $modList['mods'][] = [
-                    'name' => $modName,
-                    'enabled' => $enabled,
-                ];
-                Log::info("Added new mod '{$modName}' to mod-list.json with enabled={$enabled}");
-            }
-            
-            $writeSuccess = $this->writeModList($server, $modList);
-            
-            if ($writeSuccess) {
-                Log::info("Successfully wrote mod-list.json for '{$modName}' with enabled={$enabled}");
-            } else {
-                Log::error("Failed to write mod-list.json for '{$modName}'");
-            }
-            
-            return $writeSuccess;
+
+                return $this->writeModList($server, $modList);
+            }) === true;
         } catch (\Exception $e) {
             Log::error("Error adding mod {$modName}: " . $e->getMessage());
             return false;
@@ -443,65 +539,51 @@ class ModListService
     }
 
     /**
-     * Remove a mod from the mod list and delete the mod file
+     * Remove a mod from the mod list and delete all matching mod files
      */
     public function removeMod(Server $server, string $modName): bool
     {
+        if (in_array($modName, FactorioModPortalService::BUILTIN_MODS, true)) {
+            return false;
+        }
+
         try {
-            Log::info("Attempting to remove mod: {$modName}");
-            
-            // Remove from mod-list.json first
-            $modList = $this->readModList($server);
-            $originalCount = count($modList['mods']);
-            
-            // Filter out the mod
-            $modList['mods'] = array_values(array_filter($modList['mods'], function($mod) use ($modName) {
-                return $mod['name'] !== $modName;
-            }));
-            
-            $newCount = count($modList['mods']);
-            Log::info("Mod list count: {$originalCount} -> {$newCount}");
-            
-            if ($originalCount === $newCount) {
-                Log::warning("Mod {$modName} not found in mod-list.json");
-                return false;
-            }
-            
-            // Write updated mod list
-            if (!$this->writeModList($server, $modList)) {
-                Log::error("Failed to write mod-list.json after removing {$modName}");
-                return false;
-            }
-            
-            Log::info("Successfully removed {$modName} from mod-list.json");
-            
-            // Try to delete all mod files for this mod (in case multiple versions exist)
-            try {
-                $modFiles = $this->getModFiles($server);
-                $modFilePrefix = $modName . '_';
-                $deletedFiles = [];
-                
-                foreach ($modFiles as $file) {
-                    if (str_starts_with($file, $modFilePrefix)) {
-                        try {
-                            $this->fileRepository->setServer($server)->deleteFiles('mods', [$file]);
-                            $deletedFiles[] = $file;
-                            Log::info("Deleted mod file: {$file}");
-                        } catch (\Exception $e) {
-                            Log::warning("Could not delete mod file {$file}: " . $e->getMessage());
-                        }
-                    }
+            $removedFromList = Cache::lock("factorio_modlist:{$server->id}", 10)->block(5, function () use ($server, $modName) {
+                $modList = $this->readModList($server);
+                $originalCount = count($modList['mods']);
+
+                $modList['mods'] = array_values(array_filter($modList['mods'], function ($mod) use ($modName) {
+                    return ($mod['name'] ?? null) !== $modName;
+                }));
+
+                if (count($modList['mods']) === $originalCount) {
+                    return false;
                 }
-                
-                if (empty($deletedFiles)) {
-                    Log::info("No mod files found to delete for {$modName} (mod might have been added to list only)");
+
+                return $this->writeModList($server, $modList);
+            });
+
+            // Also delete all physical ZIP files for this mod
+            $modFiles = $this->getModFiles($server);
+            $modFilePrefix = $modName . '_';
+            $filesToDelete = [];
+
+            foreach ($modFiles as $file) {
+                if (str_starts_with($file, $modFilePrefix) && preg_match('/^' . preg_quote($modName, '/') . '_\d+\.\d+\.\d+(?:\.\d+)?\.zip$/', $file)) {
+                    $filesToDelete[] = $this->validateFilename($file);
                 }
-            } catch (\Exception $e) {
-                Log::warning("Error during mod file deletion: " . $e->getMessage());
-                // This is OK - mod might have been added without download
             }
 
-            return true;
+            if (!empty($filesToDelete)) {
+                try {
+                    $this->fileRepository->setServer($server)->deleteFiles($this->getModsPath(), $filesToDelete);
+                    Log::info('Deleted mod files: ' . implode(', ', $filesToDelete));
+                } catch (\Exception $e) {
+                    Log::warning("Could not delete mod files for {$modName}: " . $e->getMessage());
+                }
+            }
+
+            return (bool) $removedFromList || !empty($filesToDelete);
         } catch (\Exception $e) {
             Log::error("Error removing mod {$modName}: " . $e->getMessage());
             return false;
@@ -509,124 +591,129 @@ class ModListService
     }
 
     /**
-     * Toggle a mod's enabled state
+     * Toggle a mod's enabled state atomically
      */
     public function toggleMod(Server $server, string $modName): bool
     {
-        $modList = $this->readModList($server);
-        
-        Log::info("toggleMod called for '{$modName}', current mod-list.json has " . count($modList['mods']) . " mods");
-        
-        // Find the mod in the list
-        $found = false;
-        $newState = null;
-        foreach ($modList['mods'] as &$mod) {
-            if ($mod['name'] === $modName) {
-                $oldState = $mod['enabled'] ?? true;
-                $mod['enabled'] = !$oldState;
-                $newState = $mod['enabled'];
-                $found = true;
-                Log::info("Found mod '{$modName}' in mod-list.json, toggling from " . ($oldState ? 'enabled' : 'disabled') . " to " . ($newState ? 'enabled' : 'disabled'));
-                break;
-            }
-        }
-        unset($mod); // Break the reference
-        
-        // If mod not found in mod-list.json but exists as a file, add it
-        if (!$found) {
-            $modFiles = $this->getModFiles($server);
-            $modPrefix = $modName . '_';
-            
-            Log::info("Mod '{$modName}' not found in mod-list.json, checking " . count($modFiles) . " mod files");
-            
-            // Check if the mod file exists
-            $modFileExists = false;
-            foreach ($modFiles as $file) {
-                if (str_starts_with($file, $modPrefix)) {
-                    $modFileExists = true;
-                    Log::info("Found mod file: {$file}");
-                    break;
-                }
-            }
-            
-            // If file exists, add it to mod-list.json with enabled state
-            if ($modFileExists) {
-                $modList['mods'][] = [
-                    'name' => $modName,
-                    'enabled' => true, // Set to enabled since user wants to toggle it
-                ];
-                $newState = true;
-                Log::info("Added missing mod '{$modName}' to mod-list.json with enabled=true");
-            } else {
-                Log::warning("Mod '{$modName}' not found in mod-list.json and no mod file exists");
-                return false;
-            }
-        }
+        try {
+            return Cache::lock("factorio_modlist:{$server->id}", 10)->block(5, function () use ($server, $modName) {
+                $modList = $this->readModList($server);
 
-        $writeResult = $this->writeModList($server, $modList);
-        Log::info("writeModList returned: " . ($writeResult ? 'true' : 'false') . " for mod '{$modName}' with state " . ($newState ? 'enabled' : 'disabled'));
-        
-        return $writeResult;
+                $found = false;
+                foreach ($modList['mods'] as &$mod) {
+                    if (($mod['name'] ?? null) === $modName) {
+                        $oldState = $mod['enabled'] ?? true;
+                        $mod['enabled'] = !$oldState;
+                        $found = true;
+                        break;
+                    }
+                }
+                unset($mod);
+
+                if (!$found) {
+                    $modFiles = $this->getModFiles($server);
+                    if ($this->extractInstalledVersionFromFiles($modName, $modFiles) !== null) {
+                        $modList['mods'][] = [
+                            'name' => $modName,
+                            'enabled' => true,
+                        ];
+                    } else {
+                        return false;
+                    }
+                }
+
+                return $this->writeModList($server, $modList);
+            }) === true;
+        } catch (\Exception $e) {
+            Log::error("Error toggling mod {$modName}: " . $e->getMessage());
+            return false;
+        }
     }
 
     /**
-     * Get all mods from the mod list
-     * Merges mods from mod-list.json with physically installed mod files
-     * Automatically syncs missing mods to mod-list.json
+     * Set the enabled state for all non-builtin mods in a single write operation
+     *
+     * @return int Number of mods whose state was changed
      */
-    public function getMods(Server $server): array
+    public function setAllModsState(Server $server, bool $targetState): int
+    {
+        try {
+            $changedCount = 0;
+
+            $success = Cache::lock("factorio_modlist:{$server->id}", 10)->block(5, function () use ($server, $targetState, &$changedCount) {
+                $modList = $this->readModList($server);
+
+                foreach ($modList['mods'] as &$mod) {
+                    $name = $mod['name'] ?? '';
+                    if ($name === '' || in_array($name, FactorioModPortalService::BUILTIN_MODS, true)) {
+                        continue;
+                    }
+
+                    $currentState = (bool) ($mod['enabled'] ?? true);
+                    if ($currentState !== $targetState) {
+                        $mod['enabled'] = $targetState;
+                        $changedCount++;
+                    }
+                }
+                unset($mod);
+
+                if ($changedCount === 0) {
+                    return true;
+                }
+
+                return $this->writeModList($server, $modList);
+            });
+
+            return $success ? $changedCount : 0;
+        } catch (\Exception $e) {
+            Log::error('Error setting all mods state: ' . $e->getMessage());
+            return 0;
+        }
+    }
+
+    /**
+     * Get all mods from the mod list, merging mod-list.json with physically installed mod files
+     */
+    public function getMods(Server $server, ?array $modFiles = null): array
     {
         $modList = $this->readModList($server);
         $modsFromList = $modList['mods'] ?? [];
-        
-        // Get physically installed mod files
-        $modFiles = $this->getModFiles($server);
-        
-        // Create a map of mods from mod-list.json - preserve existing entries exactly as they are
+
+        $modFiles ??= $this->getModFiles($server);
+
         $modMap = [];
         foreach ($modsFromList as $mod) {
-            $modMap[$mod['name']] = $mod;
+            if (is_array($mod) && !empty($mod['name'])) {
+                $modMap[$mod['name']] = $mod;
+            }
         }
-        
-        // Track if we need to update mod-list.json
+
         $needsUpdate = false;
-        
-        // Parse mod files and add ONLY missing mods (never overwrite existing entries)
+
         foreach ($modFiles as $file) {
-            // Extract mod name from filename: modname_version.zip
             if (preg_match('/^(.+?)_\d+\.\d+\.\d+(?:\.\d+)?\.zip$/', $file, $matches)) {
                 $modName = $matches[1];
-                
-                // Skip default mods
-                $defaultMods = ['base', 'elevated-rails', 'quality', 'space-age'];
-                if (in_array($modName, $defaultMods)) {
+
+                if (in_array($modName, FactorioModPortalService::BUILTIN_MODS, true)) {
                     continue;
                 }
-                
-                // CRITICAL: Only add if mod is truly missing from mod-list.json
-                // This prevents overwriting newly installed mods that may not be physically visible yet
+
                 if (!isset($modMap[$modName])) {
                     $modMap[$modName] = [
                         'name' => $modName,
-                        'enabled' => false, // Default to disabled for safety when auto-discovering
+                        'enabled' => false,
                     ];
                     $needsUpdate = true;
                     Log::info("Found installed mod '{$modName}' not in mod-list.json, adding with enabled=false");
                 }
-                // If mod exists in modMap, keep it as-is (do NOT overwrite)
             }
         }
-        
-        // If we found new mods, update mod-list.json to keep it in sync
+
         if ($needsUpdate) {
             $modList['mods'] = array_values($modMap);
-            if ($this->writeModList($server, $modList)) {
-                Log::info("Successfully synced " . count($modMap) . " mods to mod-list.json");
-            } else {
-                Log::error("Failed to sync mods to mod-list.json");
-            }
+            $this->writeModList($server, $modList);
         }
-        
+
         return array_values($modMap);
     }
 }

@@ -7,6 +7,36 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.3.0] - 2026-11-01
+
+### Added
+- **Factorio 2.0 / 2.1 API Compatibility**:
+  - Automatic detection of latest Factorio stable & experimental major versions (`2.1` / `2.0`) via the official `https://factorio.com/api/latest-releases` endpoint
+  - Support for official Factorio 2.0/2.1 dependency prefixes: `~` (required dependency without load order effect), `(?)` / `?!` (hidden optional), and `+` (recommended dependency)
+  - Support for `namelist` bulk mod queries and `version` filtering on `/api/mods`
+  - Added header action button **"Mods Folder"** to open the server's `mods/` directory directly in Pelican's File Manager
+
+### Changed
+- **Performance & Architecture (Pelican First-Party Standards)**:
+  - Replaced sequential N+1 Mod Portal and Wings directory calls in `loadInstalledMods()` with single bulk requests (`getModsByNames()` and single `getModFiles()` call)
+  - Updated mod downloads to use Wings' foreground `/files/pull` endpoint (`foreground: true` and `file_name`) first to avoid Panel PHP memory exhaustion on large mod archives, with validated ZIP fallback
+  - Replaced global `Cache::flush()` with scoped cache versioning (`factorio_mod_portal_cache_version`) so clearing mod cache never flushes the entire Pelican Panel cache
+  - Prevented failed API requests from being cached
+  - Added atomic `Cache::lock()` around `mod-list.json` read/write operations and batch toggling via `setAllModsState()`
+  - Updated category filter buttons to match official Factorio Mod Portal categories (`overhaul` instead of `gameplay`) and prioritized `source_url` over deprecated `github_path`
+
+### Fixed
+- **Thumbnail URLs**: Fixed broken mod thumbnails (HTTP 404) by resolving relative paths against `https://assets-mod.factorio.com` and ignoring `/assets/.thumb.png` placeholders
+- **Version Compatibility Check**: Fixed `isVersionCompatible()` to enforce Factorio's exact `major.minor` matching rules (`2.0` vs `2.1`, missing `factorio_version` defaulting to `0.12`, and `0.18` compatibility on `1.0`)
+- **Built-in & Expansion Dependencies**: Built-in mods (`base`, `elevated-rails`, `quality`, `space-age`) are now properly skipped during recursive dependency installation
+- **Mod Details Modal**: Fixed `openModDetails()` showing the oldest release (`releases[0]`) instead of the latest compatible release
+- **Installed Mods Sorting**: Added missing `updates` and `version` sort handling in `filteredInstalledMods()`
+- **Server Conflict Protection**: `canAccess()` now calls `parent::canAccess()` so `BlockAccessInConflict` properly blocks access during server install/transfer/restore
+
+### Security
+- Fixed potential XSS in `formatModDetailsHtml()` and Mod Details modal by enforcing `e()` escaping and validating `http://` / `https://` URLs on `homepage` and `source_url`
+- Added path traversal validation (`validateFilename()`) for all mod filenames and `rawurlencode()` for API parameters
+
 ## [1.2.5] - 2026-02-11
 
 ### Fixed
@@ -148,7 +178,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - Enhanced `updateAllMods()` to use same logic as single mod updates
   - Better error reporting showing which mods updated successfully and which failed
 - **Mod Removal**: Improved `removeMod()` to delete ALL files of a mod (in case multiple versions exist)
-- **Logging**: Added detailed logging throughout update process for better error diagnosis
+  - **Logging**: Added detailed logging throughout update process for better error diagnosis
 - **User Notifications**: More informative notifications including version numbers and specific error messages
 
 ### Changed
@@ -231,6 +261,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Support for mod dependencies
 - Multi-language support (English, German)
 
+[1.3.0]: https://github.com/gOOvER/pelican-factorio-mod-installer/compare/v1.2.5...v1.3.0
+[1.2.5]: https://github.com/gOOvER/pelican-factorio-mod-installer/compare/v1.2.4...v1.2.5
+[1.2.4]: https://github.com/gOOvER/pelican-factorio-mod-installer/compare/v1.2.3...v1.2.4
+[1.2.3]: https://github.com/gOOvER/pelican-factorio-mod-installer/compare/v1.2.2...v1.2.3
+[1.2.2]: https://github.com/gOOvER/pelican-factorio-mod-installer/compare/v1.2.1...v1.2.2
+[1.2.1]: https://github.com/gOOvER/pelican-factorio-mod-installer/compare/v1.2.0...v1.2.1
+[1.2.0]: https://github.com/gOOvER/pelican-factorio-mod-installer/compare/v1.1.2...v1.2.0
+[1.1.2]: https://github.com/gOOvER/pelican-factorio-mod-installer/compare/v1.1.1...v1.1.2
 [1.1.1]: https://github.com/gOOvER/pelican-factorio-mod-installer/compare/v1.1.0...v1.1.1
 [1.1.0]: https://github.com/gOOvER/pelican-factorio-mod-installer/compare/v1.0.0...v1.1.0
 [1.0.0]: https://github.com/gOOvER/pelican-factorio-mod-installer/releases/tag/v1.0.0
