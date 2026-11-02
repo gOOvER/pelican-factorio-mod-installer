@@ -25,6 +25,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - Added atomic `Cache::lock()` around `mod-list.json` read/write operations and batch toggling via `setAllModsState()`
   - Updated category filter buttons to match official Factorio Mod Portal categories (`overhaul` instead of `gameplay`) and prioritized `source_url` over deprecated `github_path`
   - Updated `FactorioModInstaller::form()` to use Filament v4 `Schema::components()` API and explicitly merged `config/factorio-mod-installer.php` in `FactorioModInstallerServiceProvider::register()`
+  - Updated `update_url` in `plugin.json` to `https://hub.pelican.dev/plugins/factorio-mod-installer/update.json` for Pelican Hub compliance
 
 ### Fixed
 - **Pelican Panel PR #2134 & Egg Inheritance Compatibility**:
