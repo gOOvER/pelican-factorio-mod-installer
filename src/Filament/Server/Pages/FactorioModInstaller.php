@@ -117,7 +117,7 @@ class FactorioModInstaller extends Page implements Forms\Contracts\HasForms
     public function form(Schema $form): Schema
     {
         return $form
-            ->schema([
+            ->components([
                 Section::make('Install Mod')
                     ->description('Enter the mod name to install from Factorio Mod Portal')
                     ->schema([
@@ -165,12 +165,14 @@ class FactorioModInstaller extends Page implements Forms\Contracts\HasForms
                         Actions::make([
                             Action::make('exclude_findVersions')
                                 ->label('Find Versions')
+                                ->icon('heroicon-o-magnifying-glass')
                                 ->color('gray')
                                 ->disabled(fn () => $this->modNameValid === false || empty($this->directInstallModName))
                                 ->action(fn () => $this->loadAvailableVersions()),
 
                             Action::make('exclude_installMod')
                                 ->label(fn () => 'Install Mod' . ($this->selectedVersion ? " (v{$this->selectedVersion})" : ''))
+                                ->icon('heroicon-o-arrow-down-tray')
                                 ->color('success')
                                 ->size('lg')
                                 ->disabled(fn () => $this->modNameValid === false || empty($this->directInstallModName))
@@ -629,20 +631,20 @@ class FactorioModInstaller extends Page implements Forms\Contracts\HasForms
 
             if ($updateCount > 0) {
                 Notification::make()
-                    ->title('Updates verfügbar')
-                    ->body("Es wurden {$updateCount} Updates für installierte Mods gefunden.")
+                    ->title(__('factorio-mod-installer::factorio-mod-installer.notifications.updates_available'))
+                    ->body(__('factorio-mod-installer::factorio-mod-installer.notifications.updates_available_body', ['count' => $updateCount]))
                     ->success()
                     ->send();
             } else {
                 Notification::make()
-                    ->title('Keine Updates verfügbar')
-                    ->body('Alle installierten Mods sind auf dem neuesten Stand.')
+                    ->title(__('factorio-mod-installer::factorio-mod-installer.notifications.no_updates_available'))
+                    ->body(__('factorio-mod-installer::factorio-mod-installer.notifications.no_updates_available_body'))
                     ->info()
                     ->send();
             }
         } catch (\Exception $e) {
             Notification::make()
-                ->title('Fehler beim Suchen nach Updates')
+                ->title(__('factorio-mod-installer::factorio-mod-installer.notifications.update_check_failed'))
                 ->body($e->getMessage())
                 ->danger()
                 ->send();
@@ -1268,22 +1270,42 @@ class FactorioModInstaller extends Page implements Forms\Contracts\HasForms
             return true;
         }
 
-        if ($egg->tags) {
-            if (is_array($egg->tags)) {
-                foreach ($egg->tags as $tag) {
-                    if (is_string($tag) && str_contains(strtolower($tag), 'factorio')) {
-                        return true;
-                    }
+        $tags = $egg->tags ?? [];
+        if ($tags instanceof \Illuminate\Support\Collection) {
+            $tags = $tags->toArray();
+        } elseif (is_string($tags)) {
+            $decodedTags = json_decode($tags, true);
+            $tags = is_array($decodedTags) ? $decodedTags : [$tags];
+        }
+
+        if (is_array($tags)) {
+            foreach ($tags as $tag) {
+                $tagName = is_array($tag) ? ($tag['name'] ?? $tag[0] ?? '') : (string) $tag;
+                if ($tagName !== '' && str_contains(strtolower($tagName), 'factorio')) {
+                    return true;
                 }
-            } elseif (is_string($egg->tags) && str_contains(strtolower($egg->tags), 'factorio')) {
-                return true;
             }
         }
 
-        if ($egg->features && is_array($egg->features)) {
-            if (in_array('factorio_mod_installer', $egg->features, true)) {
-                return true;
-            }
+        $features = null;
+        try {
+            $features = $egg->inherit_features;
+        } catch (\Throwable) {
+            // Fallback to direct features below
+        }
+
+        if (empty($features)) {
+            $features = $egg->features ?? [];
+        }
+
+        if ($features instanceof \Illuminate\Support\Collection) {
+            $features = $features->toArray();
+        } elseif (is_string($features)) {
+            $features = json_decode($features, true) ?? [];
+        }
+
+        if (is_array($features) && in_array('factorio_mod_installer', $features, true)) {
+            return true;
         }
 
         return false;

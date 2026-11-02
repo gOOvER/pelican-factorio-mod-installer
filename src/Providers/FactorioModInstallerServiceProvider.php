@@ -12,6 +12,11 @@ class FactorioModInstallerServiceProvider extends ServiceProvider
      */
     public function register(): void
     {
+        $this->mergeConfigFrom(
+            plugin_path('factorio-mod-installer', 'config/factorio-mod-installer.php'),
+            'factorio-mod-installer'
+        );
+
         // Register the mod portal service as a singleton
         $this->app->singleton(FactorioModPortalService::class, function ($app) {
             return new FactorioModPortalService();

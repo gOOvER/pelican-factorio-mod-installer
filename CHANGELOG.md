@@ -7,7 +7,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-## [1.3.0] - 2026-11-01
+## [1.3.0] - 2026-11-02
 
 ### Added
 - **Factorio 2.0 / 2.1 API Compatibility**:
@@ -24,8 +24,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - Prevented failed API requests from being cached
   - Added atomic `Cache::lock()` around `mod-list.json` read/write operations and batch toggling via `setAllModsState()`
   - Updated category filter buttons to match official Factorio Mod Portal categories (`overhaul` instead of `gameplay`) and prioritized `source_url` over deprecated `github_path`
+  - Updated `FactorioModInstaller::form()` to use Filament v4 `Schema::components()` API and explicitly merged `config/factorio-mod-installer.php` in `FactorioModInstallerServiceProvider::register()`
 
 ### Fixed
+- **Pelican Panel PR #2134 & Egg Inheritance Compatibility**:
+  - Added missing icons (`heroicon-o-magnifying-glass`, `heroicon-o-arrow-down-tray`) to Direct Install action buttons (`exclude_findVersions`, `exclude_installMod`)
+  - Improved `canAccess()` to support Pelican's `inherit_features` accessor and `Collection`-based egg tags/features
+  - Replaced remaining hardcoded German notification strings in `checkForUpdates()` with EN/DE translation keys
 - **Thumbnail URLs**: Fixed broken mod thumbnails (HTTP 404) by resolving relative paths against `https://assets-mod.factorio.com` and ignoring `/assets/.thumb.png` placeholders
 - **Version Compatibility Check**: Fixed `isVersionCompatible()` to enforce Factorio's exact `major.minor` matching rules (`2.0` vs `2.1`, missing `factorio_version` defaulting to `0.12`, and `0.18` compatibility on `1.0`)
 - **Built-in & Expansion Dependencies**: Built-in mods (`base`, `elevated-rails`, `quality`, `space-age`) are now properly skipped during recursive dependency installation
